@@ -114,8 +114,10 @@ target_compile_options(luv_latency_benchmark PRIVATE
 add_executable(luv_staging_runner staging_runner.cpp)
 target_link_libraries(luv_staging_runner PRIVATE luv_core Threads::Threads)
 
-add_executable(luv_staging_soak_runner staging_soak_runner.cpp)
-target_link_libraries(luv_staging_soak_runner PRIVATE luv_core Threads::Threads)
+if(APPLE)
+    add_executable(luv_staging_soak_runner staging_soak_runner.cpp)
+    target_link_libraries(luv_staging_soak_runner PRIVATE luv_core Threads::Threads)
+endif()
 
 add_executable(luv_crash_recovery_harness crash_recovery_harness.cpp)
 target_link_libraries(luv_crash_recovery_harness PRIVATE luv_core Threads::Threads)
