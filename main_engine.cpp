@@ -64,7 +64,8 @@ void cpu_relax() noexcept {
 
 void egress_loop(luv::StaticSpscQueue<luv::OutboundPacket, kPacketQueueCapacity>& queue,
                  const std::atomic<bool>& strategy_done, uint16_t port,
-                 std::atomic<uint64_t>& sent) noexcept {
+                 std::atomic<uint64_t>& sent,
+                 std::atomic<bool>& failed) noexcept {
     int fd = -1;
     sockaddr_in destination{};
     if (port != 0) {
@@ -88,6 +89,7 @@ void egress_loop(luv::StaticSpscQueue<luv::OutboundPacket, kPacketQueueCapacity>
                                             reinterpret_cast<sockaddr*>(&destination),
                                             sizeof(destination));
             if (result == static_cast<ssize_t>(packet.len)) ++sent;
+            else failed.store(true, std::memory_order_release);
         }
     }
     if (fd >= 0) ::close(fd);
@@ -134,6 +136,7 @@ int main(int argc, char** argv) {
 
     std::atomic<bool> ingest_done{false};
     std::atomic<bool> strategy_done{false};
+    std::atomic<bool> egress_failed{false};
     std::atomic<uint64_t> sent{0};
     luv::StaticSpscQueue<luv::OutboundPacket, kPacketQueueCapacity> outbound;
 
@@ -146,7 +149,7 @@ int main(int argc, char** argv) {
     });
 
     std::thread egress(egress_loop, std::ref(outbound), std::cref(strategy_done),
-                       cfg.udp_port, std::ref(sent));
+                       cfg.udp_port, std::ref(sent), std::ref(egress_failed));
 
     uint64_t accepted = 0;
     uint32_t client_order_id = 1;
@@ -189,5 +192,5 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(consumer.ticks_processed()),
                 static_cast<unsigned long long>(accepted),
                 static_cast<unsigned long long>(sent.load()));
-    return 0;
+    return egress_failed.load(std::memory_order_acquire) ? 1 : 0;
 }
