@@ -148,6 +148,24 @@ std::cout << "Order processing: p50=" << latency_p50 << "us, p99="
           << latency_p99 << "us, throughput=" << throughput << " evt/s\n";
 ```
 
+### Paper-Trading Blitz
+
+The staging runner exercises pre-trade risk, telemetry, simulated fills, and
+recovery-ledger replay without connecting to an exchange. Its volume and pace
+are explicit so a long run can be reproduced and its ledger can be retained:
+
+```bash
+./build/luv_staging_runner \
+  --orders 1728000 \
+  --rate-hz 10 \
+  --ledger /tmp/luv_staging_48h_$(date +%Y%m%d).bin
+```
+
+This represents 48 hours at 10 orders per second. Use `--rate-hz 0` for a
+maximum-throughput smoke test. Review the emitted telemetry and replay result
+after the run; this harness is synthetic validation, not live or regulatory
+approval.
+
 ## Performance
 
 The repository contains `luv_latency_benchmark`, but no benchmark results are
