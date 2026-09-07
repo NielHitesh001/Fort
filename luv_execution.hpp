@@ -444,6 +444,7 @@ public:
             if (report.terminal || order.qty == 0) {
                 order.state = 3;
                 if (state.risk.order_count > 0) --state.risk.order_count;
+                _rate_limiter.release();
             } else {
                 order.state = 2;
             }
@@ -482,6 +483,7 @@ public:
 
             order = ActiveOrder{};
             if (state.risk.order_count > 0) --state.risk.order_count;
+            _rate_limiter.release();
             return true;
         }
         state.risk.halted = 1;

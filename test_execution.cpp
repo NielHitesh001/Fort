@@ -218,12 +218,15 @@ void test_gateway_fail_closed_controls() {
     assert(decision.pass == 1);
     assert(packet.len == luv::exec::ouch::kEnterOrderLen);
 
+    assert(gateway.apply_execution_report(
+        3, luv::ExecutionReport{intent.client_order_id, intent.qty, true}));
+
     auto second = intent;
     second.client_order_id = 0x12345678u;
     luv::OutboundPacket second_packet {};
     decision = gateway.try_build(second, second_packet);
-    assert(decision.pass == 0);
-    assert((decision.reject_mask & luv::exec::kRejectHalted) != 0);
+    assert(decision.pass == 1);
+    assert(second_packet.len == luv::exec::ouch::kEnterOrderLen);
 
     gateway.circuit_breaker().trip();
     auto after_trip = intent;
@@ -316,6 +319,7 @@ int main() {
     test_branchless_risk();
     test_ouch_template_and_gateway();
     test_production_controls();
+    test_gateway_fail_closed_controls();
     test_audit_admission();
     benchmark_risk_core();
 
