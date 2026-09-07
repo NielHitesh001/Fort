@@ -465,10 +465,6 @@ namespace itch {
         // Resolve symbol from the 8-byte stock ticker at offset 24
         const uint16_t sym_idx = symbols.lookup(raw + 24);
         if (sym_idx == SymbolTable::kNotFound) [[unlikely]] return false;
-        if (detail::be64(raw + 11) == 0 || detail::be32(raw + 20) == 0 ||
-            detail::be32(raw + 32) == 0 ||
-            detail::be64(raw + 36) == 0 ||
-            (raw[19] != 'B' && raw[19] != 'S')) [[unlikely]] return false;
 
         out.symbol_idx = sym_idx;
         out.order_ref  = detail::be64(raw + 11);

@@ -218,6 +218,11 @@ private:
     // result into the tick ring.
 
     uint32_t process_mbuf(struct rte_mbuf* mbuf) noexcept {
+        // rte_pktmbuf_mtod exposes only the first segment.  Parsing a chained
+        // mbuf as contiguous data would read beyond that segment.
+        if (!rte_pktmbuf_is_contiguous(mbuf)) [[unlikely]] {
+            return 0;
+        }
         const uint32_t pkt_len = rte_pktmbuf_pkt_len(mbuf);
         if (!_sequence_breaker.allow() ||
             pkt_len < _cfg.payload_offset + 20) [[unlikely]] {

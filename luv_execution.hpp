@@ -7,15 +7,12 @@
 // do richer work; order-time code must not allocate or build strings.
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
 
 #include "luv_arena.hpp"
-#include "luv_recovery.hpp"
-#include "luv_safety.hpp"
 
 namespace luv {
 
@@ -33,6 +30,9 @@ enum Reject : uint8_t {
     kRejectStaleAlpha = 1u << 2,
     kRejectHalted = 1u << 3,
     kRejectFlatSignal = 1u << 4,
+    kRejectOrderCapacity = 1u << 5,
+    kRejectInvalidSymbol = 1u << 6,
+    kRejectPrice = 1u << 7,
 };
 
 struct RiskLimits {
@@ -108,9 +108,10 @@ inline int64_t signed_qty_delta(uint8_t side, int64_t qty) noexcept {
     return (qty ^ sign_mask) - sign_mask; // buy=+qty, sell=-qty
 }
 
-inline int64_t abs_i64(int64_t v) noexcept {
-    const int64_t mask = v >> 63;
-    return (v ^ mask) - mask;
+inline uint64_t abs_i64(int64_t v) noexcept {
+    const uint64_t bits = static_cast<uint64_t>(v);
+    const uint64_t sign = bits >> 63;
+    return (bits ^ (0u - sign)) + sign;
 }
 
 }  // namespace exec
@@ -138,38 +139,56 @@ public:
     [[nodiscard]] exec::RiskDecision evaluate(
         const exec::OrderIntent& intent) const noexcept
     {
-        if (!_arena || intent.symbol_idx >= Config::kSymbols ||
-            intent.side > exec::kSell || intent.qty <= 0 || intent.price <= 0)
-            return {0, exec::kRejectQty};
+        if (!_arena || intent.symbol_idx >= Config::kSymbols) [[unlikely]] {
+            return {0, exec::kRejectInvalidSymbol};
+        }
         const exec::RiskLimits& limits = _limits[intent.symbol_idx];
         const RiskState& risk = _arena->exec_states[intent.symbol_idx].risk;
-
-        const int64_t signed_delta =
-            exec::signed_qty_delta(intent.side, intent.qty);
-        int64_t projected = 0;
-        const bool position_overflow =
-            __builtin_add_overflow(risk.net_position, signed_delta, &projected);
-        const uint64_t age_ns = intent.now_ns >= intent.alpha_timestamp_ns
-                              ? intent.now_ns - intent.alpha_timestamp_ns
-                              : UINT64_MAX;
 
         const uint8_t valid_qty =
             static_cast<uint8_t>((intent.qty > 0) &
                                  (intent.qty <= limits.max_order_qty));
-        const uint8_t valid_pos = static_cast<uint8_t>(
-            !position_overflow && limits.max_abs_position >= 0 &&
-            exec::abs_i64(projected) <= limits.max_abs_position);
+        // Never feed an invalid signed quantity into arithmetic that could
+        // overflow before the order is rejected.
+        const int64_t safe_qty = valid_qty ? intent.qty : 0;
+        const int64_t signed_delta = exec::signed_qty_delta(intent.side, safe_qty);
+        int64_t projected = 0;
+        const uint8_t position_add_ok = static_cast<uint8_t>(
+            !__builtin_add_overflow(risk.net_position, signed_delta, &projected));
+        const uint64_t age_ns = intent.now_ns - intent.alpha_timestamp_ns;
+
+        const uint8_t valid_pos =
+            static_cast<uint8_t>(position_add_ok &
+                (limits.max_abs_position >= 0) &
+                (exec::abs_i64(projected) <=
+                 static_cast<uint64_t>(limits.max_abs_position)));
         const uint8_t valid_alpha =
             static_cast<uint8_t>(age_ns <= limits.max_alpha_age_ns);
         const uint8_t valid_halt =
             static_cast<uint8_t>(risk.halted == 0);
+        const uint8_t valid_price = static_cast<uint8_t>(
+            (intent.price > 0) &
+            (static_cast<uint64_t>(intent.price) <= 0xFFFF'FFFFULL));
+        int64_t order_notional = 0;
+        const uint8_t notional_mul_ok = static_cast<uint8_t>(
+            !__builtin_mul_overflow(intent.price, safe_qty, &order_notional));
+        int64_t gross_after_order = 0;
+        const uint8_t exposure_add_ok = static_cast<uint8_t>(
+            !__builtin_add_overflow(risk.gross_exposure, order_notional,
+                                    &gross_after_order));
+        const uint8_t valid_notional = static_cast<uint8_t>(
+            valid_price & notional_mul_ok & exposure_add_ok &
+            (risk.gross_exposure >= 0));
 
-        const uint8_t pass = valid_qty & valid_pos & valid_alpha & valid_halt;
+        const uint8_t pass = valid_qty & valid_pos & valid_alpha & valid_halt &
+                             valid_price & valid_notional;
         const uint8_t reject =
             static_cast<uint8_t>((valid_qty ^ 1u) * exec::kRejectQty) |
             static_cast<uint8_t>((valid_pos ^ 1u) * exec::kRejectPosition) |
             static_cast<uint8_t>((valid_alpha ^ 1u) * exec::kRejectStaleAlpha) |
-            static_cast<uint8_t>((valid_halt ^ 1u) * exec::kRejectHalted);
+            static_cast<uint8_t>((valid_halt ^ 1u) * exec::kRejectHalted) |
+            static_cast<uint8_t>(((valid_price & valid_notional) ^ 1u) *
+                                 exec::kRejectPrice);
         const uint8_t fail_mask = static_cast<uint8_t>(pass - 1u);
 
         return {pass, static_cast<uint8_t>(reject & fail_mask)};
@@ -253,7 +272,6 @@ public:
         _arena = &arena;
         if (!_risk.init(arena)) return false;
         if (!_ouch.init()) return false;
-        _breaker.reset();
         return true;
     }
 
@@ -265,77 +283,30 @@ public:
         OutboundPacket& packet) noexcept
     {
         packet.len = 0;
-        if (!_arena || intent.symbol_idx >= Config::kSymbols ||
-            intent.client_order_id == 0 || intent.side > exec::kSell ||
-            intent.price <= 0)
-            return {0, exec::kRejectQty};
-        if (!_breaker.allow())
-            return {0, exec::kRejectHalted};
-
+        if (!_arena || intent.symbol_idx >= Config::kSymbols) [[unlikely]] {
+            return {0, exec::kRejectInvalidSymbol};
+        }
         exec::RiskDecision decision = _risk.evaluate(intent);
-        if (!decision.pass) {
-            ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
-            return decision;
-        }
+        const RiskState& risk = _arena->exec_states[intent.symbol_idx].risk;
+        const uint8_t capacity_ok = static_cast<uint8_t>(
+            risk.order_count < Config::kMaxActiveOrders);
+        decision.pass &= capacity_ok;
+        decision.reject_mask |= static_cast<uint8_t>(
+            (capacity_ok ^ 1u) * exec::kRejectOrderCapacity);
 
-        if (_recovery_ledger &&
-            !_recovery_ledger->append_and_flush(RecoveryEvent{
-                RecoveryEventType::kNew,
-                intent.client_order_id,
-                intent.qty,
-                intent.price,
-                static_cast<uint8_t>(intent.side),
-                intent.now_ns})) {
-            decision.pass = 0;
-            decision.reject_mask |= exec::kRejectHalted;
-            ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
-            return decision;
-        }
-
-        const bool built = _ouch.build_enter_order(intent, packet);
+        const bool built = decision.pass && _ouch.build_enter_order(intent, packet);
         const uint8_t built_bit = static_cast<uint8_t>(built);
+
         decision.pass &= built_bit;
         decision.reject_mask |= static_cast<uint8_t>(
             (built_bit ^ 1u) * exec::kRejectFlatSignal);
-
-        if (!decision.pass) {
-            packet.len = 0;
-            ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
-            return decision;
-        }
 
         const uint8_t pass_mask =
             static_cast<uint8_t>(-static_cast<int8_t>(decision.pass));
         packet.len = static_cast<uint16_t>(packet.len & pass_mask);
 
         if (decision.pass) [[likely]] {
-            if (!reserve_order_slot(intent)) {
-                decision.pass = 0;
-                decision.reject_mask |= exec::kRejectPosition;
-                packet.len = 0;
-                _breaker.record_failure();
-            } else if (_audit_log &&
-                       !_audit_log->append(intent.now_ns,
-                                           intent.client_order_id,
-                                           intent.price, intent.qty,
-                                           0, intent.side, 'A')) {
-                release_order_slot(intent);
-                decision.pass = 0;
-                decision.reject_mask |= exec::kRejectHalted;
-                packet.len = 0;
-                ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
-                _breaker.record_failure();
-            }
-            if (decision.pass &&
-                !_reconciliation.register_order(intent.client_order_id,
-                                                intent.qty)) {
-                release_order_slot(intent);
-                decision.pass = 0;
-                decision.reject_mask |= exec::kRejectPosition;
-                packet.len = 0;
-                ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
-                _breaker.record_failure();
-            }
+            reserve_order_slot(intent);
         } else {
             ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
         }
@@ -343,120 +314,11 @@ public:
         return decision;
     }
 
-    [[nodiscard]] const CircuitBreaker& circuit_breaker() const noexcept {
-        return _breaker;
-    }
-
-    void set_audit_log(DurableAuditLog* audit_log) noexcept {
-        _audit_log = audit_log;
-    }
-
-    void set_recovery_ledger(RecoveryLedger* ledger) noexcept {
-        _recovery_ledger = ledger;
-    }
-
-    [[nodiscard]] bool apply_execution_report(
-        uint16_t symbol, const ExecutionReport& report) noexcept {
-        if (!_arena || symbol >= Config::kSymbols ||
-            !_reconciliation.apply(report)) {
-            if (_arena && symbol < Config::kSymbols) {
-                _arena->exec_states[symbol].risk.halted = 1;
-            }
-            _breaker.trip();
-            return false;
-        }
-
-        SymbolExecState& state = _arena->exec_states[symbol];
-        for (uint32_t i = 0; i < Config::kMaxActiveOrders; ++i) {
-            ActiveOrder& order = state.orders[i];
-            if (order.order_id != report.order_id || order.state == 0)
-                continue;
-
-            if (_recovery_ledger &&
-                !_recovery_ledger->append_and_flush(RecoveryEvent{
-                    RecoveryEventType::kFill,
-                    order.order_id,
-                    static_cast<int64_t>(report.filled_quantity),
-                    order.price,
-                    static_cast<uint8_t>(order.side),
-                    now_ns()})) {
-                state.risk.halted = 1;
-                _breaker.trip();
-                return false;
-            }
-
-            order.filled_qty += report.filled_quantity;
-            order.qty -= report.filled_quantity;
-            if (report.terminal || order.qty == 0) {
-                order.state = 3;
-                if (state.risk.order_count > 0) --state.risk.order_count;
-            } else {
-                order.state = 2;
-            }
-            return true;
-        }
-        state.risk.halted = 1;
-        _breaker.trip();
-        return false;
-    }
-
-    [[nodiscard]] bool apply_cancel_report(
-        uint16_t symbol, uint64_t order_id) noexcept {
-        if (!_arena || symbol >= Config::kSymbols ||
-            !_reconciliation.cancel(order_id)) {
-            if (_arena && symbol < Config::kSymbols)
-                _arena->exec_states[symbol].risk.halted = 1;
-            _breaker.trip();
-            return false;
-        }
-        SymbolExecState& state = _arena->exec_states[symbol];
-        for (ActiveOrder& order : state.orders) {
-            if (order.order_id != order_id || order.state == 0) continue;
-
-            if (_recovery_ledger &&
-                !_recovery_ledger->append_and_flush(RecoveryEvent{
-                    RecoveryEventType::kCancel,
-                    order.order_id,
-                    order.qty,
-                    order.price,
-                    static_cast<uint8_t>(order.side),
-                    now_ns()})) {
-                state.risk.halted = 1;
-                _breaker.trip();
-                return false;
-            }
-
-            order = ActiveOrder{};
-            if (state.risk.order_count > 0) --state.risk.order_count;
-            return true;
-        }
-        state.risk.halted = 1;
-        _breaker.trip();
-        return false;
-    }
-
 private:
-    static uint64_t now_ns() noexcept {
-        const auto now = std::chrono::steady_clock::now().time_since_epoch();
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-    }
-    [[nodiscard]] bool reserve_order_slot(
-        const exec::OrderIntent& intent) noexcept {
+    void reserve_order_slot(const exec::OrderIntent& intent) noexcept {
         SymbolExecState& state = _arena->exec_states[intent.symbol_idx];
-        if (state.risk.order_count >= Config::kMaxActiveOrders) {
-            state.risk.halted = 1;
-            ++state.risk.reject_count;
-            return false;
-        }
-        uint32_t slot = Config::kMaxActiveOrders;
-        for (uint32_t i = 0; i < Config::kMaxActiveOrders; ++i) {
-            if (state.orders[i].state == 0 || state.orders[i].state == 3) {
-                slot = i;
-                break;
-            }
-        }
-        if (slot == Config::kMaxActiveOrders) return false;
+        const uint32_t slot =
+            state.risk.order_count & (Config::kMaxActiveOrders - 1u);
         ActiveOrder& order = state.orders[slot];
         order.order_id = intent.client_order_id;
         order.price = intent.price;
@@ -470,29 +332,11 @@ private:
             exec::signed_qty_delta(intent.side, intent.qty);
         state.risk.gross_exposure += intent.price * intent.qty;
         ++state.risk.order_count;
-        return true;
-    }
-
-    void release_order_slot(const exec::OrderIntent& intent) noexcept {
-        SymbolExecState& state = _arena->exec_states[intent.symbol_idx];
-        for (uint32_t i = 0; i < Config::kMaxActiveOrders; ++i) {
-            if (state.orders[i].order_id != intent.client_order_id) continue;
-            state.orders[i] = ActiveOrder{};
-            if (state.risk.order_count > 0) --state.risk.order_count;
-            state.risk.net_position -=
-                exec::signed_qty_delta(intent.side, intent.qty);
-            state.risk.gross_exposure -= intent.price * intent.qty;
-            return;
-        }
     }
 
     Arena* _arena = nullptr;
     PreTradeRisk _risk;
     OuchPacketTemplates _ouch;
-    CircuitBreaker _breaker{1};
-    ReconciliationLedger<> _reconciliation{};
-    DurableAuditLog* _audit_log = nullptr;
-    RecoveryLedger* _recovery_ledger = nullptr;
 };
 
 }  // namespace luv

@@ -334,44 +334,30 @@ public:
         switch (tick.msg_type) {
         case itch::kAddOrder:       // 'A' — Add Order (no MPID)
         case itch::kAddOrderMPID:   // 'F' — Add Order (with MPID)
-            if (tick.order_ref == 0 || tick.qty <= 0 || tick.price <= 0) {
-                ++_stat_rejected;
-                return;
-            }
+            if (tick.order_ref == 0 || tick.qty <= 0 || tick.price <= 0) return;
             on_add_order(tick);
             break;
         case itch::kOrderExecuted:  // 'E' — Order Executed
         case itch::kOrderExecPrice: // 'C' — Order Executed w/ Price
-            if (tick.order_ref == 0 || tick.qty <= 0) {
-                ++_stat_rejected;
-                return;
-            }
+            if (tick.order_ref == 0 || tick.qty <= 0) return;
             on_order_executed(tick);
             break;
         case itch::kOrderCancel:    // 'X' — Order Cancel
-            if (tick.order_ref == 0 || tick.qty <= 0) {
-                ++_stat_rejected;
-                return;
-            }
+            if (tick.order_ref == 0 || tick.qty <= 0) return;
             on_order_cancel(tick);
             break;
         case itch::kOrderDelete:    // 'D' — Order Delete
-            if (tick.order_ref == 0) {
-                ++_stat_rejected;
-                return;
-            }
+            if (tick.order_ref == 0) return;
             on_order_delete(tick);
             break;
         case itch::kOrderReplace:   // 'U' — Order Replace
             if (tick.order_ref == 0 || tick.match_num == 0 ||
                 tick.order_ref == tick.match_num || tick.qty <= 0 ||
-                tick.price <= 0) {
-                ++_stat_rejected;
-                return;
-            }
+                tick.price <= 0) return;
             on_order_replace(tick);
             break;
         case itch::kTrade:          // 'P' — Trade (non-cross)
+            if (tick.qty <= 0 || tick.price <= 0) return;
             on_trade(tick);
             break;
         default:
@@ -385,24 +371,14 @@ public:
 
     /// Best bid price (highest bid), or 0 if no bids.
     [[nodiscard]] int64_t best_bid_price(uint16_t sym) const noexcept {
-        std::shared_lock<std::shared_mutex> lock(_mutex);
         if (sym >= Config::kSymbols) return 0;
-        return best_bid_price_unlocked(sym);
-    }
-
-    [[nodiscard]] int64_t best_ask_price(uint16_t sym) const noexcept {
-        std::shared_lock<std::shared_mutex> lock(_mutex);
-        if (sym >= Config::kSymbols) return 0;
-        return best_ask_price_unlocked(sym);
-    }
-
-    [[nodiscard]] int64_t best_bid_price_unlocked(uint16_t sym) const noexcept {
         if (_meta[sym].bid_levels == 0) return 0;
         return _arena->level(sym, 0, 0).price;  // bids sorted descending
     }
 
     /// Best ask price (lowest ask), or 0 if no asks.
-    [[nodiscard]] int64_t best_ask_price_unlocked(uint16_t sym) const noexcept {
+    [[nodiscard]] int64_t best_ask_price(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return 0;
         if (_meta[sym].ask_levels == 0) return 0;
         return _arena->level(sym, 1, 0).price;  // asks sorted ascending
     }
@@ -430,7 +406,6 @@ public:
 
     /// Sum of total_qty across the top `levels` bid levels.
     [[nodiscard]] int64_t bid_depth_qty(uint16_t sym, uint32_t levels) const noexcept {
-        std::shared_lock<std::shared_mutex> lock(_mutex);
         if (sym >= Config::kSymbols) return 0;
         const uint32_t n = (levels < _meta[sym].bid_levels)
                          ? levels : _meta[sym].bid_levels;
@@ -442,7 +417,6 @@ public:
 
     /// Sum of total_qty across the top `levels` ask levels.
     [[nodiscard]] int64_t ask_depth_qty(uint16_t sym, uint32_t levels) const noexcept {
-        std::shared_lock<std::shared_mutex> lock(_mutex);
         if (sym >= Config::kSymbols) return 0;
         const uint32_t n = (levels < _meta[sym].ask_levels)
                          ? levels : _meta[sym].ask_levels;
@@ -454,11 +428,13 @@ public:
 
     /// Number of active bid price levels for a symbol.
     [[nodiscard]] uint16_t bid_level_count(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return 0;
         return _meta[sym].bid_levels;
     }
 
     /// Number of active ask price levels for a symbol.
     [[nodiscard]] uint16_t ask_level_count(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return 0;
         return _meta[sym].ask_levels;
     }
 
@@ -826,7 +802,7 @@ private:
             loc->symbol_idx, loc->side, loc->level_idx);
         OrderSlot& slot = lvl.orders[loc->slot_idx];
 
-        // Prevent a corrupted aggregate from wrapping below zero.
+        // Keep a corrupted aggregate from wrapping below zero.
         lvl.total_qty -= clamped_qty(slot.qty, lvl.total_qty);
 
         unlink_slot(lvl, loc->slot_idx);
@@ -857,22 +833,12 @@ private:
         // Look up the original order to determine its side
         const OrderLocation* orig_loc = _order_map.lookup(tick.order_ref);
         if (!orig_loc || !valid_location(tick.order_ref, *orig_loc)) [[unlikely]] return;
-        if (_order_map.lookup(tick.match_num) != nullptr) [[unlikely]] return;
 
         // Save the side before deleting (the pointer may be invalidated
         // after remove if it triggers a level removal)
         const uint8_t  saved_side = orig_loc->side;
         const uint16_t saved_sym  = orig_loc->symbol_idx;
-
-        const int32_t target_level = find_level(
-            saved_sym, saved_side, tick.price);
-        if (target_level < 0 &&
-            level_count(saved_sym, saved_side) >= Config::kLevelsPerSide)
-            return;
-        if (target_level >= 0 &&
-            static_cast<uint16_t>(target_level) != orig_loc->level_idx &&
-            _arena->level(saved_sym, saved_side, target_level).alloc_slot() < 0)
-            return;
+        if (_order_map.lookup(tick.match_num) != nullptr) [[unlikely]] return;
 
         // ── Delete the original order ────────────────────────────────────
         {

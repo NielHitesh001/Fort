@@ -1,0 +1,91 @@
+Start testing: Sep 07 11:36 IST
+----------------------------------------------------------
+1/19 Testing: test_ai_telemetry
+1/19 Test: test_ai_telemetry
+Command: "/Users/nielhitesh/LUV---Flicker-/build/test_ai_telemetry"
+Directory: /Users/nielhitesh/LUV---Flicker-/build
+"test_ai_telemetry" start time: Sep 07 11:36 IST
+Output:
+----------------------------------------------------------
+AI + Telemetry Integration Test
+
+== AI engine ==
+  [OK] mapped model -> features -> signal
+
+== Telemetry bridge ==
+  [OK] heartbeat ring -> UDP dashboard packet
+
+All AI/telemetry tests passed.
+<end of output>
+Test time =   1.24 sec
+----------------------------------------------------------
+Test Passed.
+"test_ai_telemetry" end time: Sep 07 11:36 IST
+"test_ai_telemetry" time elapsed: 00:00:01
+----------------------------------------------------------
+
+11/19 Testing: test_telemetry_export
+11/19 Test: test_telemetry_export
+Command: "/Users/nielhitesh/LUV---Flicker-/build/test_telemetry_export"
+Directory: /Users/nielhitesh/LUV---Flicker-/build
+"test_telemetry_export" start time: Sep 07 11:36 IST
+Output:
+----------------------------------------------------------
+telemetry batch export passed: percentiles and drops verified
+<end of output>
+Test time =   0.68 sec
+----------------------------------------------------------
+Test Passed.
+"test_telemetry_export" end time: Sep 07 11:36 IST
+"test_telemetry_export" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/19 Testing: test_prometheus_export
+12/19 Test: test_prometheus_export
+Command: "/Users/nielhitesh/LUV---Flicker-/build/test_prometheus_export"
+Directory: /Users/nielhitesh/LUV---Flicker-/build
+"test_prometheus_export" start time: Sep 07 11:36 IST
+Output:
+----------------------------------------------------------
+[OK] Prometheus export format
+<end of output>
+Test time =   0.80 sec
+----------------------------------------------------------
+Test Passed.
+"test_prometheus_export" end time: Sep 07 11:36 IST
+"test_prometheus_export" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/19 Testing: test_shutdown_controller
+13/19 Test: test_shutdown_controller
+Command: "/Users/nielhitesh/LUV---Flicker-/build/test_shutdown_controller"
+Directory: /Users/nielhitesh/LUV---Flicker-/build
+"test_shutdown_controller" start time: Sep 07 11:36 IST
+Output:
+----------------------------------------------------------
+[OK] shutdown controller lifecycle
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"test_shutdown_controller" end time: Sep 07 11:36 IST
+"test_shutdown_controller" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/19 Testing: test_strategy
+14/19 Test: test_strategy
+Command: "/Users/nielhitesh/LUV---Flicker-/build/test_strategy"
+Directory: /Users/nielhitesh/LUV---Flicker-/build
+"test_strategy" start time: Sep 07 11:36 IST
+Output:
+----------------------------------------------------------
+[OK] strategy planner
+<end of output>
+Test time =   0.68 sec
+----------------------------------------------------------
+Test Passed.
+"test_strategy" end time: Sep 07 11:37 IST
+"test_strategy" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 07 11:37 IST

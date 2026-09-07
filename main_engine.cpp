@@ -1,143 +1,187 @@
-#include <chrono>
+// Simulation-only end-to-end LUV topology.
+//
+// Ingest: SimFeedSource -> arena.tick_ring
+// Strategy: Consumer + AI signal -> ExecutionGateway -> packet queue
+// Egress: packet queue -> localhost UDP (optional)
+
+#include <atomic>
+#include <cerrno>
+#include <cstring>
+#include <cstdint>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <thread>
 
-#include "luv_arena.hpp"
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "luv_ai.hpp"
+#include "luv_consumer.hpp"
 #include "luv_execution.hpp"
-#include "luv_recovery.hpp"
-#include "luv_safety.hpp"
-#include "luv_telemetry.hpp"
+#include "luv_feed_sim.hpp"
 
 namespace {
 
-constexpr const char* kLedgerPath = "/tmp/luv_main_engine_ledger.bin";
+constexpr uint32_t kPacketQueueCapacity = 1u << 12;
 
-uint64_t monotonic_ns() noexcept {
-    timespec ts{};
-    ::clock_gettime(CLOCK_MONOTONIC, &ts);
+struct RunConfig {
+    uint64_t message_limit = 100'000;
+    uint16_t udp_port = 0;  // 0 keeps egress disabled.
+    const char* model_path = nullptr;
+};
+
+[[nodiscard]] bool parse_args(int argc, char** argv, RunConfig& cfg) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--messages") == 0 && i + 1 < argc) {
+            cfg.message_limit = std::strtoull(argv[++i], nullptr, 10);
+        } else if (std::strcmp(argv[i], "--udp-port") == 0 && i + 1 < argc) {
+            cfg.udp_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (std::strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
+            cfg.model_path = argv[++i];
+        } else {
+            return false;
+        }
+    }
+    return cfg.message_limit != 0;
+}
+
+void cpu_relax() noexcept {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#endif
+}
+
+[[nodiscard]] uint64_t monotonic_now_ns() noexcept {
+    timespec ts {};
+    (void)::clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
            static_cast<uint64_t>(ts.tv_nsec);
+}
+
+void egress_loop(luv::StaticSpscQueue<luv::OutboundPacket, kPacketQueueCapacity>& queue,
+                 const std::atomic<bool>& strategy_done, uint16_t port,
+                 std::atomic<uint64_t>& sent) noexcept {
+    int fd = -1;
+    sockaddr_in destination{};
+    if (port != 0) {
+        fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        destination.sin_family = AF_INET;
+        destination.sin_port = htons(port);
+        (void)::inet_pton(AF_INET, "127.0.0.1", &destination.sin_addr);
+    }
+
+    luv::OutboundPacket packet{};
+    // Do not exit merely because production stopped: every accepted order is
+    // drained before the queue owner tears down.
+    while (!strategy_done.load(std::memory_order_acquire) || !queue.empty()) {
+        if (!queue.try_pop(packet)) {
+            cpu_relax();
+            continue;
+        }
+        if (fd >= 0 && packet.len != 0) {
+            const ssize_t result = ::sendto(fd, packet.bytes, packet.len,
+                                            MSG_DONTWAIT,
+                                            reinterpret_cast<sockaddr*>(&destination),
+                                            sizeof(destination));
+            if (result == static_cast<ssize_t>(packet.len)) ++sent;
+        }
+    }
+    if (fd >= 0) ::close(fd);
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    bool metrics_mode = false;
-    const char* ledger_path = kLedgerPath;
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--metrics") == 0) {
-            metrics_mode = true;
-        } else {
-            ledger_path = argv[i];
-        }
+    RunConfig cfg{};
+    if (!parse_args(argc, argv, cfg)) {
+        std::fprintf(stderr, "Usage: %s [--messages N] [--model PATH] [--udp-port PORT]\n", argv[0]);
+        return 2;
     }
-    ::unlink(ledger_path);
 
     luv::Arena arena;
     if (!arena.init()) {
-        std::fprintf(stderr, "arena init failed\n");
+        std::fprintf(stderr, "Unable to initialise LUV arena.\n");
         return 1;
     }
 
-    luv::ExecutionGateway gateway;
-    if (!gateway.init(arena)) {
-        std::fprintf(stderr, "gateway init failed\n");
-        return 1;
+    luv::SimConfig feed_cfg{};
+    feed_cfg.target_rate_hz = 0;
+    feed_cfg.prebuf_count = 1u << 12;
+    luv::SimFeedSource feed(feed_cfg);
+    if (!feed.init(arena)) return 1;
+
+    luv::Consumer consumer;
+    luv::ExecutionGateway execution;
+    if (!consumer.init(arena) || !execution.init(arena)) return 1;
+    for (uint16_t symbol = 0; symbol < luv::Config::kSymbols; ++symbol) {
+        execution.risk().set_limits(symbol, {1'000, 100'000, 1'000'000'000});
     }
 
-    luv::RecoveryLedger ledger;
-    if (!ledger.open(ledger_path)) {
-        std::fprintf(stderr, "ledger open failed: %s\n", ledger_path);
-        return 1;
-    }
-    gateway.set_recovery_ledger(&ledger);
-
-    luv::exec::RiskLimits limits{};
-    limits.max_order_qty = 10'000;
-    limits.max_abs_position = 100'000;
-    limits.max_alpha_age_ns = 250'000;
-    gateway.risk().set_limits(0, limits);
-
-    luv::MetricsHttpServer metrics_server;
-    if (metrics_mode) {
-        luv::TelemSnapshot initial_snapshot{};
-        if (!metrics_server.start(initial_snapshot)) {
-            std::fprintf(stderr, "metrics server failed to start on port 9090\n");
+    luv::AIEngine ai;
+    if (cfg.model_path) {
+        if (!ai.init(arena) || !ai.load_model_file(cfg.model_path)) {
+            std::fprintf(stderr, "Unable to load model: %s\n", cfg.model_path);
             return 1;
         }
-        std::printf("metrics listening on http://127.0.0.1:%u/metrics\n",
-                    metrics_server.port());
+        consumer.set_ai_engine(&ai);
     }
 
-    luv::ShutdownController shutdown;
-    std::thread trigger;
-    if (!metrics_mode) {
-        trigger = std::thread([] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            luv::ShutdownController::request_shutdown();
-        });
-    }
+    std::atomic<bool> ingest_done{false};
+    std::atomic<bool> strategy_done{false};
+    std::atomic<uint64_t> sent{0};
+    luv::StaticSpscQueue<luv::OutboundPacket, kPacketQueueCapacity> outbound;
 
-    luv::TelemetryBatchCollector<256> collector;
-    uint64_t order_id = 1;
-    const auto start = std::chrono::steady_clock::now();
-    while (!shutdown.requested()) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!metrics_mode && now - start > std::chrono::seconds(1)) break;
+    std::thread ingest([&] {
+        while (feed.total_messages() < cfg.message_limit) (void)feed.poll();
+        ingest_done.store(true, std::memory_order_release);
+    });
 
+    std::thread egress(egress_loop, std::ref(outbound), std::cref(strategy_done),
+                       cfg.udp_port, std::ref(sent));
+
+    uint64_t accepted = 0;
+    uint32_t client_order_id = 1;
+    while (!ingest_done.load(std::memory_order_acquire) ||
+           arena.tick_ring.size() != 0) {
+        luv::TickMsg* tick = arena.tick_ring.try_peek();
+        if (!tick) {
+            cpu_relax();
+            continue;
+        }
+        const uint16_t symbol = tick->symbol_idx;
+        const int64_t price = tick->price;
+        (void)consumer.process_one();
+
+        if (!cfg.model_path) continue;
+        const luv::SignalOutput& signal = arena.signal(symbol);
+        if (signal.direction == 0 || price <= 0) continue;
         luv::exec::OrderIntent intent{};
-        intent.symbol_idx = 0;
-        intent.side = (order_id % 2 == 0) ? luv::exec::kBuy : luv::exec::kSell;
-        intent.qty = 100 + static_cast<int64_t>(order_id % 50);
-        intent.price = 10'000 + static_cast<int64_t>((order_id % 20) * 100);
-        intent.alpha_timestamp_ns = monotonic_ns() - 50'000ULL;
-        intent.now_ns = monotonic_ns();
-        intent.client_order_id = static_cast<uint32_t>(order_id);
-
+        intent.symbol_idx = symbol;
+        intent.side = signal.direction > 0 ? luv::exec::kBuy : luv::exec::kSell;
+        intent.qty = 1;
+        intent.price = price;
+        // Feed timestamps and host clocks are different domains.  Timestamp
+        // alpha at evaluation so the stale-alpha guard measures real elapsed
+        // strategy time rather than comparing an exchange value to itself.
+        intent.alpha_timestamp_ns = monotonic_now_ns();
+        intent.now_ns = monotonic_now_ns();
+        intent.client_order_id = client_order_id++;
         luv::OutboundPacket packet{};
-        const auto decision = gateway.try_build(intent, packet);
-        collector.record_order_sent();
-        collector.record_order_check(decision.pass != 0);
-
-        if (decision.pass) {
-            collector.record_ack();
-            collector.record_fill(static_cast<int64_t>(intent.qty));
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        ++order_id;
-
-        if (metrics_mode && luv::TelemetryPublisher::publish_heartbeat(
-                arena, 42'000, 3.5f, 99.0f)) {
-            if (luv::TelemSnapshot* snapshot = arena.telem_ring.try_peek()) {
-                metrics_server.update(*snapshot);
-                arena.telem_ring.consume();
-            }
+        if (execution.try_build(intent, packet).pass) {
+            while (!outbound.try_push(packet)) cpu_relax();
+            ++accepted;
         }
     }
+    strategy_done.store(true, std::memory_order_release);
+    ingest.join();
+    egress.join();
 
-    if (trigger.joinable()) trigger.join();
-    if (!collector.flush(arena)) {
-        std::fprintf(stderr, "telemetry flush failed\n");
-        return 1;
-    }
-
-    if (metrics_mode) {
-        const bool published = luv::TelemetryPublisher::publish_heartbeat(
-            arena, 42'000, 3.5f, 99.0f);
-        (void)published;
-        if (luv::TelemSnapshot* snapshot = arena.telem_ring.try_peek()) {
-            metrics_server.update(*snapshot);
-            arena.telem_ring.consume();
-        }
-        while (!shutdown.requested())
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
-    std::printf("main_engine shutdown=%s orders=%llu\n",
-                shutdown.requested() ? "requested" : "normal",
-                static_cast<unsigned long long>(order_id - 1));
+    std::printf("processed=%llu accepted=%llu udp_sent=%llu\n",
+                static_cast<unsigned long long>(consumer.ticks_processed()),
+                static_cast<unsigned long long>(accepted),
+                static_cast<unsigned long long>(sent.load()));
     return 0;
 }

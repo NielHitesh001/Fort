@@ -1,0 +1,16 @@
+test_ai_telemetry 2 0.62161
+test_arena 1 0.701188
+test_execution 1 1.29842
+test_feed 1 0.651645
+test_lob 1 1.04192
+test_stress 1 33.8643
+test_decoder_fuzz 1 0.930682
+test_concurrency 1 0.760604
+test_ouch_parser 1 0.902159
+test_risk_validator 1 0.922313
+test_telemetry_export 2 0.342067
+test_crash_recovery 1 0.682835
+test_shutdown_controller 4 0.00115244
+test_strategy 2 0.34016
+test_prometheus_export 1 0.798119
+---

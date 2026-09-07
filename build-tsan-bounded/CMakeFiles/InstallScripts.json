@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/nielhitesh/LUV---Flicker-/build-tsan-bounded/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

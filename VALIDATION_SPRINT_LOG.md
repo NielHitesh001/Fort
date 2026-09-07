@@ -1,67 +1,82 @@
 # Validation Sprint Log
 
-Repository: `NielHitesh001/Arbor`
-Engine: `Arbor / LUV Flicker`
-Date: 2026-09-05
+Repository: `LUV---Flicker-`
+Start date: 2026-09-04
 
-## Verified Local Gates
+Use this log for reproducible validation evidence. Record commands, environment, results, and links to artifacts. Do not mark a check complete without recorded output.
 
-- [x] CMake Debug configure/build
-- [x] Release CMake/CTest with long stress disabled: 13 enabled tests passed; stress intentionally skipped in bounded readiness mode
-- [x] ASAN/UBSAN CMake build and CTest: 14/14 passed
-- [x] Bounded ThreadSanitizer CMake build and CTest: 13 enabled tests passed; stress intentionally skipped in bounded sanitizer profile
-- [x] Audit hash-chain corruption rejection
-- [x] OUCH parser fuzz smoke: 100,000 inputs
-- [x] Risk validator fuzz smoke: 50,000 inputs
-- [x] Process-level SIGKILL recovery replay
-- [x] Release `test_latency` target builds and runs on the current checkout
-- [x] `git diff --check`
-- [ ] Target-hardware DPDK validation
-- [ ] 24-hour stability and production-scale traffic
-- [ ] Venue-specific protocol certification
+## Dependency Snapshot
 
-## Commands
+- **LUV repository:** `NielHitesh001/LUV---Flicker-`
+- **LUV local commit:** `e12d9bbaf08846a63c5de780059d05e98c3e80d8`
+- **LUV dependency model:** standalone header-only CMake interface; no `.gitmodules`
+- **Bank_money checkout:** `/Users/nielhitesh/Downloads/Bank_money--main`
+- **Bank_money repository state:** extracted directory, not a git checkout
+- **Bank_money integration:** no LUV, submodule, CMake, or native dependency references found
+- **Integration status:** pending explicit application integration
 
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j2
-ctest --test-dir build --output-on-failure
+## Build and Regression Validation
 
-cmake -S . -B build-asan -DLUV_ENABLE_ASAN_UBSAN=ON
-cmake --build build-asan -j2
-ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-asan --output-on-failure
+- [ ] Local checkout confirmed
+- [ ] Release configure completed
+- [ ] Build completed
+- [ ] CTest suite passed
+- [ ] Sanitizer or Valgrind run completed
+- [ ] `LUV_REQUIRE_MLOCK=ON` behavior verified
+- [ ] `LUV_REQUIRE_MLOCK=OFF` graceful fallback verified
 
-cmake -S . -B build-tsan-bounded -DLUV_ENABLE_TSAN=ON \
-  -DLUV_ENABLE_LONG_STRESS_TESTS=OFF
-cmake --build build-tsan-bounded -j2
-TSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-tsan-bounded --output-on-failure
-```
-
-## Local Latency Sample
-
-Run `test_latency` on the current checkout. These numbers are local simulation
-measurements and are not an exchange or production SLA.
+Configure command:
 
 ```text
-Compiler: AppleClang / C++20 Release build
-Host: macOS local development workstation
-Build flags: -O2, Release, asserts preserved
- p50 ns: 1667
- p99 ns: 9000
- p999 ns: 36375
- Samples: 20000
- Result: observed local simulation baseline; not an SLA
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DLUV_REQUIRE_MLOCK=ON
 ```
 
-## Remaining Evidence
+Build and test command:
 
-Production readiness still requires target-hardware DPDK tests, venue-specific
-transport/certification, authenticated execution reports, external audit
-retention, failover/cancel-on-disconnect, and long-duration stability data.
+```text
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+```
 
-## Validation Finding
+Environment and commit:
 
-The first CMake Release benchmark crashed because the benchmark target allowed
-setup assertions to compile out. The target now preserves `assert` checks like
-the regression tests; the rebuilt Release benchmark passes. This is why
-benchmark setup checks remain enabled in test targets.
+```text
+OS:
+Compiler:
+CMake:
+Commit:
+Result:
+Artifacts:
+```
+
+## Paper Validation
+
+Paper-mode runs require an approved feed, execution configuration, and an audit destination. Do not use live trading credentials in this repository or log.
+
+| Run | Date | Orders | Errors | p50 | p95 | p99 | Audit integrity | Feed lag | Result |
+|---|---|---:|---:|---:|---:|---:|---|---:|---|
+| Day 2 | 2026-09-05 | 0 | 0 | n/a | n/a | n/a | not run | n/a | pending |
+| Day 3 | 2026-09-06 | 0 | 0 | n/a | n/a | n/a | not run | n/a | pending |
+| Day 4 | 2026-09-07 | 0 | 0 | n/a | n/a | n/a | not run | n/a | pending |
+| Day 5 | 2026-09-08 | 0 | 0 | n/a | n/a | n/a | not run | n/a | pending |
+| Day 6 | 2026-09-09 | 0 | 0 | n/a | n/a | n/a | not run | n/a | pending |
+| Day 7 | 2026-09-10 | 0 | 0 | n/a | n/a | n/a | not run | n/a | pending |
+
+## Audit and Monitoring Evidence
+
+- [ ] Every mutation records order ID, price, quantity, side, and timestamp
+- [ ] Hash-chain verification completed
+- [ ] Throughput dashboard checked
+- [ ] Latency p50/p95/p99 dashboard checked
+- [ ] Feed lag/connectivity dashboard checked
+- [ ] Error budget checked
+- [ ] Failover or recovery behavior tested
+
+Artifact links and notes:
+
+```text
+Audit logs:
+Dashboard:
+Hash verification:
+Open issues:
+```
