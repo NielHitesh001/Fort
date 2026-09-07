@@ -99,7 +99,6 @@ set(LUV_TESTS
     lob
     moldudp64_fixture
     ouch_parser
-    packet_io
     prometheus_export
     risk_validator
     sequence_tracker
@@ -108,6 +107,10 @@ set(LUV_TESTS
     stress
     telemetry_export
 )
+
+if(NOT LUV_ENABLE_DPDK)
+    list(APPEND LUV_TESTS packet_io)
+endif()
 
 enable_testing()
 foreach(test_name IN LISTS LUV_TESTS)

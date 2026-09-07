@@ -34,9 +34,10 @@ static int ensure_eal_ready(void) {
         "packet_io",
         "--in-memory",
         "--no-huge",
-        "--iova-mode=va",
+        "--iova-mode",
+        "va",
     };
-    int ret = rte_eal_init(4, argv);
+    int ret = rte_eal_init(5, argv);
     if (ret < 0) {
         fprintf(stderr, "packet_io_init_dpdk: rte_eal_init failed: %d\n", ret);
         return -1;
@@ -191,6 +192,28 @@ static uint16_t packet_io_tx_burst_dpdk(uint8_t port_id, uint16_t queue_id,
     return rte_eth_tx_burst(port_id, queue_id, (struct rte_mbuf**)packets, nb_pkts);
 }
 
+static void packet_io_packet_free_dpdk(void* packet) {
+    if (!packet) return;
+    struct rte_mbuf* mb = (struct rte_mbuf*)packet;
+    if (mb->pool) {
+        rte_pktmbuf_free(mb);
+    } else {
+        free(mb);
+    }
+}
+
+static int packet_io_packet_is_contiguous_dpdk(void* packet) {
+    return packet != NULL;
+}
+
+static uint32_t packet_io_packet_len_dpdk(void* packet) {
+    return packet ? ((struct rte_mbuf*)packet)->pkt_len : 0U;
+}
+
+static const uint8_t* packet_io_packet_data_dpdk(void* packet) {
+    return packet ? rte_pktmbuf_mtod((struct rte_mbuf*)packet, const uint8_t*) : NULL;
+}
+
 /**
  * packet_io_get_next_packet_dpdk
  * 
@@ -210,5 +233,9 @@ packet_io_ops_t packet_io_ops = {
     .fini             = packet_io_fini_dpdk,
     .rx_burst         = packet_io_rx_burst_dpdk,
     .tx_burst         = packet_io_tx_burst_dpdk,
+    .packet_free      = packet_io_packet_free_dpdk,
+    .packet_is_contiguous = packet_io_packet_is_contiguous_dpdk,
+    .packet_len       = packet_io_packet_len_dpdk,
+    .packet_data      = packet_io_packet_data_dpdk,
     .get_next_packet  = packet_io_get_next_packet_dpdk,
 };

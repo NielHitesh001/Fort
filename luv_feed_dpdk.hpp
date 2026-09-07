@@ -26,6 +26,7 @@ struct DpdkConfig {
     int eal_argc = 0;
     char** eal_argv = nullptr;
     uint32_t payload_offset = 42;
+    bool allow_simulation = false;
 };
 
 class DpdkFeedSource final : public IFeedSource {
@@ -42,16 +43,8 @@ public:
     [[nodiscard]] bool init(Arena& arena) noexcept override {
         if (!arena.is_initialised()) return false;
         _arena = &arena;
-        packet_io_config_t config{};
-        config.port_id = _cfg.port_id;
-        config.rx_queue_id = _cfg.rx_queue_id;
-        config.nb_rx_desc = _cfg.nb_rx_desc;
-        config.mempool_size = _cfg.mempool_size;
-        config.mbuf_cache = _cfg.mbuf_cache;
-        config.mtu = _cfg.mtu;
-        config.eal_argc = _cfg.eal_argc;
-        config.eal_argv = _cfg.eal_argv;
-        if (packet_io.init(&config) != 0) {
+        if (packet_io_init(1, 1) != 0) {
+            if (!_cfg.allow_simulation) return false;
             _using_simulation = true;
             return _simulation.init(arena);
         }
@@ -64,13 +57,14 @@ public:
         if (!_initialised) return 0;
         void* packets[64]{};
         const int requested = _cfg.burst_size > 64 ? 64 : _cfg.burst_size;
-        const int received = packet_io.rx_burst(packets, requested);
+        const int received = packet_io_rx(static_cast<uint8_t>(_cfg.port_id),
+                          _cfg.rx_queue_id, packets, requested);
         if (received <= 0) return 0;
 
         uint32_t decoded = 0;
         for (int i = 0; i < received; ++i) {
             if (packets[i]) decoded += process_packet(packets[i]);
-            packet_io.packet_free(packets[i]);
+            packet_io_packet_free(packets[i]);
         }
         return decoded;
     }
@@ -108,12 +102,12 @@ private:
     CircuitBreaker _sequence_breaker{1};
 
     uint32_t process_packet(void* packet) noexcept {
-        if (!packet_io.packet_is_contiguous(packet)) return 0;
-        const uint32_t packet_len = packet_io.packet_len(packet);
+        if (!packet_io_packet_is_contiguous(packet)) return 0;
+        const uint32_t packet_len = packet_io_packet_len(packet);
         if (!_sequence_breaker.allow() ||
             packet_len < _cfg.payload_offset + 20) return 0;
 
-        const uint8_t* data = packet_io.packet_data(packet);
+        const uint8_t* data = packet_io_packet_data(packet);
         if (!data) return 0;
         const uint8_t* payload = data + _cfg.payload_offset;
         const uint32_t payload_len = packet_len - _cfg.payload_offset;
@@ -156,7 +150,7 @@ private:
             return;
         }
         if (_initialised) {
-            packet_io.cleanup();
+            packet_io_fini();
             _initialised = false;
         }
     }

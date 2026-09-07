@@ -201,6 +201,22 @@ static uint16_t packet_io_tx_burst_stub(uint8_t port_id, uint16_t queue_id,
     return nb_pkts;
 }
 
+static void packet_io_packet_free_stub(void* packet) {
+    (void)packet;
+}
+
+static int packet_io_packet_is_contiguous_stub(void* packet) {
+    return packet != NULL;
+}
+
+static uint32_t packet_io_packet_len_stub(void* packet) {
+    return packet ? sizeof(((struct sim_packet*)packet)->payload) : 0U;
+}
+
+static const uint8_t* packet_io_packet_data_stub(void* packet) {
+    return packet ? ((const struct sim_packet*)packet)->payload : NULL;
+}
+
 /**
  * packet_io_get_next_packet_stub
  * 
@@ -220,5 +236,9 @@ packet_io_ops_t packet_io_ops = {
     .fini             = packet_io_fini_stub,
     .rx_burst         = packet_io_rx_burst_stub,
     .tx_burst         = packet_io_tx_burst_stub,
+    .packet_free      = packet_io_packet_free_stub,
+    .packet_is_contiguous = packet_io_packet_is_contiguous_stub,
+    .packet_len       = packet_io_packet_len_stub,
+    .packet_data      = packet_io_packet_data_stub,
     .get_next_packet  = packet_io_get_next_packet_stub,
 };

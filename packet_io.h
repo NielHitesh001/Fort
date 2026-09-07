@@ -22,6 +22,11 @@ typedef struct packet_io_ops {
     /* Transmit up to 32 packets */
     uint16_t (*tx_burst)(uint8_t port_id, uint16_t queue_id,
                          void **packets, uint16_t nb_pkts);
+
+    void (*packet_free)(void* packet);
+    int (*packet_is_contiguous)(void* packet);
+    uint32_t (*packet_len)(void* packet);
+    const uint8_t* (*packet_data)(void* packet);
     
     /* Get next packet from feed (stub-specific, used by tests) */
     void* (*get_next_packet)(void);
@@ -48,6 +53,22 @@ static inline uint16_t packet_io_rx(uint8_t port, uint16_t queue,
 static inline uint16_t packet_io_tx(uint8_t port, uint16_t queue,
                                      void **pkts, uint16_t nb) {
     return packet_io_ops.tx_burst(port, queue, pkts, nb);
+}
+
+static inline void packet_io_packet_free(void* packet) {
+    packet_io_ops.packet_free(packet);
+}
+
+static inline int packet_io_packet_is_contiguous(void* packet) {
+    return packet_io_ops.packet_is_contiguous(packet);
+}
+
+static inline uint32_t packet_io_packet_len(void* packet) {
+    return packet_io_ops.packet_len(packet);
+}
+
+static inline const uint8_t* packet_io_packet_data(void* packet) {
+    return packet_io_ops.packet_data(packet);
 }
 
 #endif // PACKET_IO_H
