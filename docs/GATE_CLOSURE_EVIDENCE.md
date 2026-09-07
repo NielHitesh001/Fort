@@ -6,8 +6,8 @@ Scope: Local engineering validation only
 
 ## Executive Status
 
-**Gate A: NOT PASSED.** The local test evidence below is reproducible, but the
-repository is not clean and the external staging prerequisites and immutable
+**Gate A: NOT PASSED.** The local test evidence below is reproducible and the
+worktree is currently clean, but the external staging prerequisites and remote
 push have not been verified from this workspace.
 
 This record does not authorize staging or live-capital deployment.
@@ -20,17 +20,18 @@ Command:
 git status --short --branch
 ```
 
-Result: `main...origin/main`, with modified tracked files and multiple
-untracked files/directories, including the build trees and this evidence
-archive. The required clean-worktree criterion is therefore **NOT MET**.
+Result: `main...origin/main [ahead 1]`; the worktree is clean. The local branch
+contains one commit not present on `origin/main`.
 
 HEAD:
 
 ```text
-e12d9bbaf08846a63c5de780059d05e98c3e80d8
+f51c96805027267682683ea7812988514f62cb31
 ```
 
-HEAD commit date: `2026-05-30 17:24:26 +0530`
+HEAD commit date: `2026-09-07 10:06:21 +0530`
+
+HEAD subject: `hii`
 
 `git diff --check`: **PASS**.
 
@@ -41,6 +42,13 @@ Mach-O binaries on macOS:
 
 - `build-day4/crash_recovery_harness`
 - `build-phase2/staging_soak_runner`
+
+Metadata recorded locally:
+
+| Binary | Size | Filesystem timestamp | Format |
+| --- | ---: | --- | --- |
+| `build-day4/crash_recovery_harness` | 89,704 bytes | 2026-09-07 08:22:14 +0530 | arm64 Mach-O executable |
+| `build-phase2/staging_soak_runner` | 36,384 bytes | 2026-09-07 07:47:51 +0530 | arm64 Mach-O executable |
 
 The `build-day4` tree was rebuilt successfully with CMake. Both required
 targets linked successfully.
@@ -122,12 +130,12 @@ open:
 - AWS `t3.medium` instance running
 - OUCH replay feed accessibility
 - Prometheus and Grafana configuration/live dashboards
-- Immutable evidence push to the remote repository
+- Evidence push to the remote repository
 - Engineering/QA approval of the gate
 
 ## Gate Decision
 
-**NO-GO / PENDING.** Local binaries and validation runs are available, but
-Gate A cannot close until the worktree status is resolved, evidence is pushed
-to the agreed immutable remote location, staging prerequisites are confirmed,
-and the Engineering Lead/QA sign-off is recorded.
+**NO-GO / PENDING.** Local binaries and validation runs are available, and the
+worktree is clean. Gate A cannot close until this evidence commit is pushed to
+the agreed remote location, staging prerequisites are confirmed, and the
+Engineering Lead/QA sign-off is recorded.
