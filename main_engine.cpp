@@ -22,6 +22,7 @@
 #include "luv_consumer.hpp"
 #include "luv_execution.hpp"
 #include "luv_feed_sim.hpp"
+#include "luv_safety.hpp"
 
 namespace {
 
@@ -101,6 +102,8 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    luv::ShutdownController shutdown;
+
     luv::Arena arena;
     if (!arena.init()) {
         std::fprintf(stderr, "Unable to initialise LUV arena.\n");
@@ -135,7 +138,10 @@ int main(int argc, char** argv) {
     luv::StaticSpscQueue<luv::OutboundPacket, kPacketQueueCapacity> outbound;
 
     std::thread ingest([&] {
-        while (feed.total_messages() < cfg.message_limit) (void)feed.poll();
+        while (!shutdown.requested() &&
+               feed.total_messages() < cfg.message_limit) {
+            (void)feed.poll();
+        }
         ingest_done.store(true, std::memory_order_release);
     });
 
