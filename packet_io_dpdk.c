@@ -1,86 +1,143 @@
-#include "packet_io.h"
+/**
+ * packet_io_dpdk.c
+ * 
+ * Linux/CI DPDK packet I/O implementation.
+ * Real hardware or vfio-user backend.
+ * 
+ * Only compiled when LUV_ENABLE_DPDK=ON on Linux.
+ */
 
+#include "packet_io.h"
 #include <rte_eal.h>
 #include <rte_ethdev.h>
 #include <rte_mbuf.h>
 #include <rte_mempool.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-static struct rte_mempool* mbuf_pool;
-static uint16_t active_port;
-static uint16_t active_rx_queue;
-static int port_started;
+#define MEMPOOL_CACHE_SZ 256
+#define RX_RING_SZ 1024
+#define TX_RING_SZ 1024
+#define NUM_MBUFS 8192
 
-static int dpdk_init(const packet_io_config_t* config) {
-    if (!config) return -1;
-    if (rte_eal_init(config->eal_argc, config->eal_argv) < 0) return -1;
-    if (!rte_eth_dev_is_valid_port(config->port_id)) return -1;
+static uint16_t g_port_id = 0;
+static struct rte_mempool* g_mbuf_pool = NULL;
 
-    mbuf_pool = rte_pktmbuf_pool_create(
-        "LUV_MBUF_POOL", config->mempool_size, config->mbuf_cache, 0,
-        RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
-    if (!mbuf_pool) return -1;
-
-    struct rte_eth_conf port_conf = {0};
-    port_conf.rxmode.mtu = config->mtu;
-    if (rte_eth_dev_configure(config->port_id, 1, 0, &port_conf) < 0) return -1;
-    if (rte_eth_rx_queue_setup(config->port_id, config->rx_queue_id,
-                               config->nb_rx_desc,
-                               rte_eth_dev_socket_id(config->port_id),
-                               0, mbuf_pool) < 0) return -1;
-    if (rte_eth_dev_start(config->port_id) < 0) return -1;
-
-    active_port = config->port_id;
-    active_rx_queue = config->rx_queue_id;
-    port_started = 1;
-    rte_eth_promiscuous_enable(active_port);
-    return 0;
-}
-
-static int dpdk_rx_burst(void* packets[], int max) {
-    if (!packets || max <= 0) return 0;
-    return (int)rte_eth_rx_burst(active_port, active_rx_queue,
-                                 (struct rte_mbuf**)packets,
-                                 (uint16_t)max);
-}
-
-static int dpdk_tx_burst(void* packets[], int count) {
-    (void)packets;
-    (void)count;
-    return 0;
-}
-
-static int dpdk_packet_is_contiguous(void* packet) {
-    return packet && rte_pktmbuf_is_contiguous((struct rte_mbuf*)packet);
-}
-
-static uint32_t dpdk_packet_len(void* packet) {
-    return packet ? rte_pktmbuf_pkt_len((struct rte_mbuf*)packet) : 0;
-}
-
-static const uint8_t* dpdk_packet_data(void* packet) {
-    return packet ? rte_pktmbuf_mtod((struct rte_mbuf*)packet, const uint8_t*) : 0;
-}
-
-static void dpdk_packet_free(void* packet) {
-    if (packet) rte_pktmbuf_free((struct rte_mbuf*)packet);
-}
-
-static void dpdk_cleanup(void) {
-    if (port_started) {
-        rte_eth_dev_stop(active_port);
-        rte_eth_dev_close(active_port);
-        port_started = 0;
+/**
+ * packet_io_init_dpdk
+ * 
+ * Initialize DPDK EAL and ethdev.
+ * Assumes DPDK EAL already initialized by main(); this just sets up the port.
+ */
+static int packet_io_init_dpdk(uint16_t num_rx_queues, uint16_t num_tx_queues) {
+    int ret;
+    
+    /* Configure port */
+    struct rte_eth_conf port_conf = {
+        .rxmode = { .mq_mode = RTE_ETH_MQ_RX_RSS },
+        .txmode = { .mq_mode = RTE_ETH_MQ_TX_NONE },
+    };
+    
+    /* Create mbuf pool */
+    g_mbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", NUM_MBUFS,
+                                           MEMPOOL_CACHE_SZ, 0,
+                                           RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
+    if (!g_mbuf_pool) {
+        fprintf(stderr, "packet_io_init_dpdk: failed to create mbuf pool\n");
+        return -1;
     }
-    mbuf_pool = 0;
+    
+    /* Configure device */
+    ret = rte_eth_dev_configure(g_port_id, num_rx_queues, num_tx_queues, &port_conf);
+    if (ret < 0) {
+        fprintf(stderr, "packet_io_init_dpdk: failed to configure device: %d\n", ret);
+        return -1;
+    }
+    
+    /* Setup RX queues */
+    for (uint16_t i = 0; i < num_rx_queues; i++) {
+        ret = rte_eth_rx_queue_setup(g_port_id, i, RX_RING_SZ,
+                                      rte_eth_dev_socket_id(g_port_id), NULL, g_mbuf_pool);
+        if (ret < 0) {
+            fprintf(stderr, "packet_io_init_dpdk: failed to setup RX queue %u: %d\n", i, ret);
+            return -1;
+        }
+    }
+    
+    /* Setup TX queues */
+    for (uint16_t i = 0; i < num_tx_queues; i++) {
+        ret = rte_eth_tx_queue_setup(g_port_id, i, TX_RING_SZ,
+                                      rte_eth_dev_socket_id(g_port_id), NULL);
+        if (ret < 0) {
+            fprintf(stderr, "packet_io_init_dpdk: failed to setup TX queue %u: %d\n", i, ret);
+            return -1;
+        }
+    }
+    
+    /* Start device */
+    ret = rte_eth_dev_start(g_port_id);
+    if (ret < 0) {
+        fprintf(stderr, "packet_io_init_dpdk: failed to start device: %d\n", ret);
+        return -1;
+    }
+    
+    fprintf(stderr, "packet_io_init_dpdk: initialized port %u with %u RX, %u TX queues\n",
+            g_port_id, num_rx_queues, num_tx_queues);
+    return 0;
 }
 
-packet_io_ops_t packet_io = {
-    dpdk_init,
-    dpdk_rx_burst,
-    dpdk_tx_burst,
-    dpdk_packet_is_contiguous,
-    dpdk_packet_len,
-    dpdk_packet_data,
-    dpdk_packet_free,
-    dpdk_cleanup,
+/**
+ * packet_io_fini_dpdk
+ * 
+ * Stop device and clean up.
+ */
+static void packet_io_fini_dpdk(void) {
+    if (rte_eth_dev_is_valid_port(g_port_id)) {
+        rte_eth_dev_stop(g_port_id);
+        rte_eth_dev_close(g_port_id);
+    }
+    
+    if (g_mbuf_pool) {
+        rte_mempool_free(g_mbuf_pool);
+        g_mbuf_pool = NULL;
+    }
+}
+
+/**
+ * packet_io_rx_burst_dpdk
+ * 
+ * Native DPDK rx_burst call.
+ */
+static uint16_t packet_io_rx_burst_dpdk(uint8_t port_id, uint16_t queue_id,
+                                         void **packets, uint16_t nb_pkts) {
+    return rte_eth_rx_burst(port_id, queue_id, (struct rte_mbuf**)packets, nb_pkts);
+}
+
+/**
+ * packet_io_tx_burst_dpdk
+ * 
+ * Native DPDK tx_burst call.
+ */
+static uint16_t packet_io_tx_burst_dpdk(uint8_t port_id, uint16_t queue_id,
+                                         void **packets, uint16_t nb_pkts) {
+    return rte_eth_tx_burst(port_id, queue_id, (struct rte_mbuf**)packets, nb_pkts);
+}
+
+/**
+ * packet_io_get_next_packet_dpdk
+ * 
+ * Not used in DPDK path; burst API is preferred.
+ * Stub returns NULL.
+ */
+static void* packet_io_get_next_packet_dpdk(void) {
+    return NULL;
+}
+
+/* Global ops table */
+packet_io_ops_t packet_io_ops = {
+    .init             = packet_io_init_dpdk,
+    .fini             = packet_io_fini_dpdk,
+    .rx_burst         = packet_io_rx_burst_dpdk,
+    .tx_burst         = packet_io_tx_burst_dpdk,
+    .get_next_packet  = packet_io_get_next_packet_dpdk,
 };
