@@ -90,6 +90,7 @@ set(LUV_TESTS
     ai_telemetry
     arena
     audit_integrity
+    compliance_aml
     concurrency
     crash_recovery
     crash_recovery_process
@@ -103,10 +104,12 @@ set(LUV_TESTS
     order_types
     ouch_parser
     prometheus_export
+    risk_engine
     risk_validator
     sequence_tracker
     shutdown_controller
     strategy
+    strategy_sandbox
     stress
     telemetry_export
 )

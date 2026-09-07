@@ -82,4 +82,31 @@ private:
     bool _invalid = false;
 };
 
+struct RequestPacket {
+    char session[10]{};
+    uint64_t sequence = 0;
+    uint16_t requested_count = 0;
+};
+
+[[nodiscard]] inline bool format_request(const RequestPacket& req, uint8_t* buffer, std::size_t size) noexcept {
+    if (!buffer || size < 20) return false;
+    std::memcpy(buffer, req.session, 10);
+    // Write 64-bit sequence (BE)
+    for (int i = 7; i >= 0; --i) {
+        buffer[10 + i] = static_cast<uint8_t>((req.sequence >> ((7 - i) * 8)) & 0xFF);
+    }
+    // Write 16-bit count (BE)
+    buffer[18] = static_cast<uint8_t>((req.requested_count >> 8) & 0xFF);
+    buffer[19] = static_cast<uint8_t>(req.requested_count & 0xFF);
+    return true;
+}
+
+[[nodiscard]] inline bool parse_request(const uint8_t* data, std::size_t size, RequestPacket& req) noexcept {
+    if (!data || size < 20) return false;
+    std::memcpy(req.session, data, 10);
+    req.sequence = read_be64(data + 10);
+    req.requested_count = read_be16(data + 18);
+    return true;
+}
+
 }  // namespace luv::moldudp64

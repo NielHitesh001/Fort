@@ -68,6 +68,13 @@ public:
         _fd = ::open(path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
         if (_fd < 0) return false;
 
+        struct flock fl{};
+        fl.l_type = F_WRLCK;
+        fl.l_whence = SEEK_SET;
+        fl.l_start = 0;
+        fl.l_len = 0;
+        (void)::fcntl(_fd, F_SETLK, &fl);
+
         struct stat metadata{};
         if (::fstat(_fd, &metadata) != 0 ||
             metadata.st_size % static_cast<off_t>(sizeof(RecoveryRecord)) != 0) {
@@ -76,6 +83,41 @@ public:
         }
         _sequence = static_cast<uint64_t>(
             metadata.st_size / static_cast<off_t>(sizeof(RecoveryRecord)));
+        return true;
+    }
+
+    [[nodiscard]] static bool verify_wal_integrity(const char* path, uint64_t& valid_records,
+                                                   uint64_t& error_seq) noexcept {
+        valid_records = 0;
+        error_seq = 0;
+        if (!path) return false;
+        int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return false;
+        struct stat st{};
+        if (::fstat(fd, &st) != 0 || st.st_size % static_cast<off_t>(sizeof(RecoveryRecord)) != 0) {
+            ::close(fd);
+            return false;
+        }
+        const uint64_t total = static_cast<uint64_t>(st.st_size / static_cast<off_t>(sizeof(RecoveryRecord)));
+        uint64_t expected_seq = 0;
+        for (uint64_t i = 0; i < total; ++i) {
+            RecoveryRecord rec{};
+            if (::pread(fd, &rec, sizeof(RecoveryRecord), static_cast<off_t>(i * sizeof(RecoveryRecord))) !=
+                static_cast<ssize_t>(sizeof(RecoveryRecord))) {
+                error_seq = expected_seq;
+                ::close(fd);
+                return false;
+            }
+            if (rec.magic != 0x31564352 || rec.version != kRecoveryRecordVersion ||
+                rec.sequence != expected_seq || checksum(rec) != rec.checksum) {
+                error_seq = expected_seq;
+                ::close(fd);
+                return false;
+            }
+            ++expected_seq;
+            ++valid_records;
+        }
+        ::close(fd);
         return true;
     }
 

@@ -281,6 +281,13 @@ struct alignas(kCacheLine) SPSCRing {
         return Capacity;
     }
 
+    enum class MemoryPressureTier : uint8_t {
+        kNormal = 0,
+        kWarning = 1,
+        kShedLoad = 2,
+        kEmergencyHalt = 3,
+    };
+
     [[nodiscard]] double occupancy_ratio() const noexcept {
         const uint64_t current_size = size();
         return static_cast<double>(current_size) / static_cast<double>(Capacity);
@@ -288,6 +295,28 @@ struct alignas(kCacheLine) SPSCRing {
 
     [[nodiscard]] bool is_near_capacity(double warning_threshold = 0.80) const noexcept {
         return occupancy_ratio() >= warning_threshold;
+    }
+
+    [[nodiscard]] MemoryPressureTier pressure_tier() const noexcept {
+        const double ratio = occupancy_ratio();
+        if (ratio >= 0.95) return MemoryPressureTier::kEmergencyHalt;
+        if (ratio >= 0.85) return MemoryPressureTier::kShedLoad;
+        if (ratio >= 0.70) return MemoryPressureTier::kWarning;
+        return MemoryPressureTier::kNormal;
+    }
+
+    [[nodiscard]] bool allow_ingress(bool is_cancellation = false) const noexcept {
+        const MemoryPressureTier tier = pressure_tier();
+        switch (tier) {
+            case MemoryPressureTier::kNormal:
+            case MemoryPressureTier::kWarning:
+                return true;
+            case MemoryPressureTier::kShedLoad:
+                return is_cancellation; // Only permit cancellations/fills in shedding mode
+            case MemoryPressureTier::kEmergencyHalt:
+                return false; // Proactively reject all ingress before hard OOM
+        }
+        return false;
     }
 };
 

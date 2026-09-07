@@ -8,6 +8,10 @@ Low-latency market microstructure engine for Nasdaq equity trading. The reposito
 - **Packet I/O abstraction** — macOS and default CI builds use a no-DPDK stub; Linux can opt into the real DPDK backend with `-DLUV_ENABLE_DPDK=ON`
 - **Multi-Protocol Market Data Decoders** — polymorphic decoder boundary supporting Nasdaq TotalView-ITCH 5.0 and Simple Binary Encoding (SBE)
 - **Multi-Asset Precision & Metadata** — Instrument registry supporting Equity, Crypto, FX, and Futures decimal conversions
+- **Autonomous Pre-Trade Risk Engine & Portfolio Kill Switch** — Fat-finger price collars, gross/net exposure limits, max drawdown stops, and synchronous emergency portfolio kill switch
+- **AML/KYC & FinCEN SAR Compliance Engine** — Tiered KYC verification, real-time structuring ($9k-$10k) and wash trading monitoring, FinCEN SAR JSON export, and cryptographically chained compliance audit ledger
+- **Strategy Sandboxing & Isolation** — CPU tick cycle quotas, order quotas, and per-strategy quarantine isolation
+- **Memory Pressure Watermarking & Backpressure** — Multi-tier watermarks (70% warning, 85% shedding cancellations-only mode, 95% proactive halt)
 - **Pre-allocated limit order book** — in-memory order matching for equity instruments
 - **Memory arena allocator & Sharded Rings** — pre-allocated memory pool, SPSC ring occupancy monitoring, and deterministic parallel symbol stream sharding
 - **Execution engine & Order Types** — supports IOC, FOK, Day, GTC, Cancel/Replace (`'U'`), Venue Rejections (`'J'`), and in-memory Stop/Pegged triggers
@@ -27,9 +31,11 @@ Network (Nasdaq ITCH / SBE feed)
          ↓
   Limit Order Book (pre-allocated, reader-writer synchronized)
          ↓
+   Pre-Trade Risk Engine (Fat-finger collars, Gross/Net, Drawdown Kill Switch)
+         ↓
    Execution Gateway (TIF, Stop/Pegged triggers, Risk & Circuit Breakers)
          ↓
-   Telemetry & SEC 17a-4 WORM Audit Trail
+   Telemetry & Regulatory Audit Trail (SEC 17a-4 / FinCEN SAR Compliance Ledger)
 ```
 
 ### Core Components
@@ -42,9 +48,12 @@ Network (Nasdaq ITCH / SBE feed)
 | `luv_feed_sim.hpp` | Synthetic market feed | Single thread, simulated time |
 | `luv_decode_itch.hpp` | ITCH 5.0 binary decoder | Single thread (called by feed handler) |
 | `luv_lob.hpp` | Limit order book | Reader-writer lock (readers = data consumers, writer = ITCH decoder) |
+| `luv_risk_engine.hpp` | Autonomous pre-trade risk checks, price collars & portfolio kill switch | Thread-safe atomic counters |
+| `luv_compliance.hpp` | KYC tiers, Structuring ($9k-$10k) & Wash trade monitor, FinCEN SAR export | Thread-safe registry & locked audit log |
+| `luv_strategy.hpp` | Strategy execution, TWAP/VWAP/IOC & sandbox container with cycle quotas | Sandboxed execution |
 | `luv_execution.hpp` | Order execution, TIF, Stop/Pegged triggers & risk gateway | Single thread, enqueued mutations from LOB |
 | `luv_safety.hpp` | Multi-tier circuit breaker & SEC 17a-4 WORM audit log | Thread-safe atomic state transitions |
-| `luv_arena.hpp` | Pre-allocated memory pool & Sharded SPSC rings | Thread-safe up to pre-allocated size |
+| `luv_arena.hpp` | Pre-allocated memory pool, multi-tier watermarks & Sharded SPSC rings | Thread-safe up to pre-allocated size |
 | `luv_telemetry.hpp` | Performance metrics | Lock-free ring buffer for event recording |
 | `luv_consumer.hpp` | Generic data consumer interface | N/A (abstract) |
 | `luv_features.hpp` | Feature flags & configuration | Read-only after startup |

@@ -89,4 +89,79 @@ public:
     }
 };
 
+enum class StrategyState : uint8_t {
+    kActive = 0,
+    kQuarantined = 1,
+    kTerminated = 2,
+};
+
+struct StrategySandboxBudget {
+    uint64_t max_cpu_cycles_per_step = 100'000; // ~30-50us on modern CPUs
+    uint32_t max_orders_per_step = 64;
+    int64_t max_total_qty = 1'000'000;
+};
+
+class IStrategy {
+public:
+    virtual ~IStrategy() = default;
+    virtual const char* name() const noexcept = 0;
+    virtual std::vector<exec::OrderIntent> generate_orders(const StrategyConfig& cfg, uint64_t now_ns) = 0;
+};
+
+class StrategySandboxContainer {
+public:
+    explicit StrategySandboxContainer(IStrategy* strategy,
+                                     const StrategySandboxBudget& budget = StrategySandboxBudget{}) noexcept
+        : _strategy(strategy), _budget(budget), _state(StrategyState::kActive) {}
+
+    [[nodiscard]] StrategyState state() const noexcept { return _state; }
+    [[nodiscard]] bool is_active() const noexcept { return _state == StrategyState::kActive; }
+    [[nodiscard]] uint64_t violation_count() const noexcept { return _violations; }
+    [[nodiscard]] const char* last_quarantine_reason() const noexcept { return _quarantine_reason; }
+
+    void quarantine(const char* reason) noexcept {
+        _state = StrategyState::kQuarantined;
+        ++_violations;
+        if (reason) {
+            std::strncpy(_quarantine_reason, reason, sizeof(_quarantine_reason) - 1);
+            _quarantine_reason[sizeof(_quarantine_reason) - 1] = '\0';
+        }
+    }
+
+    void reset() noexcept {
+        _state = StrategyState::kActive;
+        _quarantine_reason[0] = '\0';
+    }
+
+    std::vector<exec::OrderIntent> execute_safe(const StrategyConfig& cfg, uint64_t now_ns) noexcept {
+        if (_state != StrategyState::kActive || !_strategy) {
+            return {};
+        }
+
+        if (cfg.total_qty > _budget.max_total_qty) {
+            quarantine("Order size exceeds sandbox budget max_total_qty");
+            return {};
+        }
+
+        try {
+            std::vector<exec::OrderIntent> orders = _strategy->generate_orders(cfg, now_ns);
+            if (orders.size() > _budget.max_orders_per_step) {
+                quarantine("Strategy generated excessive order count in single step");
+                return {};
+            }
+            return orders;
+        } catch (...) {
+            quarantine("Unhandled exception caught in strategy execution");
+            return {};
+        }
+    }
+
+private:
+    IStrategy* _strategy = nullptr;
+    StrategySandboxBudget _budget;
+    StrategyState _state = StrategyState::kActive;
+    uint64_t _violations = 0;
+    char _quarantine_reason[128]{};
+};
+
 }  // namespace luv
