@@ -245,6 +245,11 @@ private:
         if (payload_bytes > _model_size - payload_offset) return false;
 
         _weights = reinterpret_cast<const float*>(_model_base + payload_offset);
+        for (size_t i = 0; i < _header->input_floats; ++i) {
+            if (!std::isfinite(_weights[i]) || std::fabs(_weights[i]) > 1e6f) {
+                return false;
+            }
+        }
         _model_id = static_cast<uint8_t>(
             std::min<uint32_t>(_header->model_id, 255u));
         return true;
@@ -320,6 +325,7 @@ private:
     }
 
     void write_signal(uint16_t sym, float score) noexcept {
+        if (!std::isfinite(score)) score = 0.0f;
         SignalOutput& out = _arena->signal_slots[sym];
         out.expected_move = score;
         out.direction = (score > 0.0f) ? 1 : ((score < 0.0f) ? -1 : 0);
