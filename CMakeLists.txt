@@ -99,6 +99,7 @@ set(LUV_TESTS
     execution
     feed
     lob
+    lob_sanity
     moldudp64_fixture
     multi_feed_and_compliance
     order_types

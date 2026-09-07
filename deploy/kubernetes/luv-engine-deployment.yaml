@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: luv-microstructure-engine
+  labels:
+    app: luv-engine
+    tier: trading-core
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: luv-engine
+  template:
+    metadata:
+      labels:
+        app: luv-engine
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: luv-engine
+        image: ghcr.io/nielhitesh001/fort-luv-engine:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          capabilities:
+            add:
+              - SYS_NICE
+              - IPC_LOCK
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+        ports:
+        - name: metrics
+          containerPort: 9100
+          protocol: TCP
+        - name: telemetry
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: LUV_ENV
+          value: "staging"
+        - name: LUV_LOG_LEVEL
+          value: "INFO"
+        - name: LUV_NUMA_NODE
+          value: "0"
+        volumeMounts:
+        - name: audit-storage
+          mountPath: /var/log/luv/audit
+        - name: wal-storage
+          mountPath: /var/log/luv/wal
+      volumes:
+      - name: audit-storage
+        persistentVolumeClaim:
+          claimName: luv-audit-pvc
+      - name: wal-storage
+        persistentVolumeClaim:
+          claimName: luv-wal-pvc

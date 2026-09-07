@@ -205,32 +205,41 @@ private:
 //  TickMsg flag bits — encode buy/sell side
 // ─────────────────────────────────────────────────────────────────────────────
 namespace tick_flags {
-    inline constexpr uint8_t kBuy        = 0x01;  // bit 0: 1=buy, 0=sell
-    inline constexpr uint8_t kPrintable  = 0x02;  // bit 1: trade (has match_num)
+    inline constexpr uint8_t kBuy                 = 0x01;  // bit 0: 1=buy, 0=sell
+    inline constexpr uint8_t kPrintable           = 0x02;  // bit 1: trade (has match_num)
+    inline constexpr uint8_t kCross               = 0x04;  // bit 2: cross trade
+    inline constexpr uint8_t kHalted              = 0x08;  // bit 3: stock trading halt/pause
+    inline constexpr uint8_t kShortSaleRestricted = 0x10;  // bit 4: Reg SHO short sale restriction
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ITCH 5.0 message type constants
 // ─────────────────────────────────────────────────────────────────────────────
 namespace itch {
-    inline constexpr uint8_t kAddOrder       = 'A';  // 0x41 — Add Order (no MPID)
-    inline constexpr uint8_t kAddOrderMPID   = 'F';  // 0x46 — Add Order (with MPID)
-    inline constexpr uint8_t kOrderExecuted  = 'E';  // 0x45 — Order Executed
-    inline constexpr uint8_t kOrderExecPrice = 'C';  // 0x43 — Order Executed w/ Price
-    inline constexpr uint8_t kOrderCancel    = 'X';  // 0x58 — Order Cancel
-    inline constexpr uint8_t kOrderDelete    = 'D';  // 0x44 — Order Delete
-    inline constexpr uint8_t kOrderReplace   = 'U';  // 0x55 — Order Replace
-    inline constexpr uint8_t kTrade          = 'P';  // 0x50 — Trade (non-cross)
+    inline constexpr uint8_t kAddOrder            = 'A';  // 0x41 — Add Order (no MPID)
+    inline constexpr uint8_t kAddOrderMPID        = 'F';  // 0x46 — Add Order (with MPID)
+    inline constexpr uint8_t kOrderExecuted       = 'E';  // 0x45 — Order Executed
+    inline constexpr uint8_t kOrderExecPrice      = 'C';  // 0x43 — Order Executed w/ Price
+    inline constexpr uint8_t kOrderCancel         = 'X';  // 0x58 — Order Cancel
+    inline constexpr uint8_t kOrderDelete         = 'D';  // 0x44 — Order Delete
+    inline constexpr uint8_t kOrderReplace        = 'U';  // 0x55 — Order Replace
+    inline constexpr uint8_t kTrade               = 'P';  // 0x50 — Trade (non-cross)
+    inline constexpr uint8_t kCrossTrade          = 'Q';  // 0x51 — Cross Trade
+    inline constexpr uint8_t kStockTradingAction  = 'H';  // 0x48 — Stock Trading Action
+    inline constexpr uint8_t kRegSHO              = 'Y';  // 0x59 — Reg SHO Short Sale Restriction
 
     // ── Minimum message lengths (bytes, AFTER the 2-byte length prefix) ──
-    inline constexpr size_t kLenAddOrder      = 36;
-    inline constexpr size_t kLenAddOrderMPID  = 40;  // 36 + 4 bytes MPID
-    inline constexpr size_t kLenOrderExecuted = 31;
-    inline constexpr size_t kLenOrderExecPrice = 36;
-    inline constexpr size_t kLenOrderCancel   = 23;
-    inline constexpr size_t kLenOrderDelete   = 19;
-    inline constexpr size_t kLenOrderReplace  = 35;
-    inline constexpr size_t kLenTrade         = 44;
+    inline constexpr size_t kLenAddOrder           = 36;
+    inline constexpr size_t kLenAddOrderMPID       = 40;  // 36 + 4 bytes MPID
+    inline constexpr size_t kLenOrderExecuted      = 31;
+    inline constexpr size_t kLenOrderExecPrice     = 36;
+    inline constexpr size_t kLenOrderCancel        = 23;
+    inline constexpr size_t kLenOrderDelete        = 19;
+    inline constexpr size_t kLenOrderReplace       = 35;
+    inline constexpr size_t kLenTrade              = 44;
+    inline constexpr size_t kLenCrossTrade         = 40;
+    inline constexpr size_t kLenStockTradingAction = 25;
+    inline constexpr size_t kLenRegSHO             = 20;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -473,6 +482,50 @@ namespace itch {
         out.match_num  = detail::be64(raw + 36);
         out.flags      = tick_flags::kPrintable
                        | ((raw[19] == 'B') ? tick_flags::kBuy : 0);
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Cross Trade — 'Q' (40 bytes)
+    // ═══════════════════════════════════════════════════════════════════════
+    case itch::kCrossTrade: {
+        if (len < itch::kLenCrossTrade) [[unlikely]] return false;
+        const uint16_t sym_idx = symbols.lookup(raw + 19);
+        if (sym_idx == SymbolTable::kNotFound) [[unlikely]] return false;
+
+        out.symbol_idx = sym_idx;
+        out.qty        = static_cast<int64_t>(detail::be64(raw + 11));
+        out.price      = static_cast<int64_t>(detail::be32(raw + 27));
+        out.match_num  = detail::be64(raw + 31);
+        out.flags      = tick_flags::kPrintable | tick_flags::kCross;
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Stock Trading Action / Halts — 'H' (25 bytes)
+    // ═══════════════════════════════════════════════════════════════════════
+    case itch::kStockTradingAction: {
+        if (len < itch::kLenStockTradingAction) [[unlikely]] return false;
+        const uint16_t sym_idx = symbols.lookup(raw + 11);
+        if (sym_idx == SymbolTable::kNotFound) [[unlikely]] return false;
+
+        out.symbol_idx = sym_idx;
+        const char trading_state = static_cast<char>(raw[19]);
+        out.flags = (trading_state == 'H' || trading_state == 'P') ? tick_flags::kHalted : 0;
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Reg SHO Short Sale Price Test Restriction — 'Y' (20 bytes)
+    // ═══════════════════════════════════════════════════════════════════════
+    case itch::kRegSHO: {
+        if (len < itch::kLenRegSHO) [[unlikely]] return false;
+        const uint16_t sym_idx = symbols.lookup(raw + 11);
+        if (sym_idx == SymbolTable::kNotFound) [[unlikely]] return false;
+
+        out.symbol_idx = sym_idx;
+        const char reg_sho_action = static_cast<char>(raw[19]);
+        out.flags = (reg_sho_action == '1' || reg_sho_action == '2') ? tick_flags::kShortSaleRestricted : 0;
         return true;
     }
 

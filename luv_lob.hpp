@@ -260,6 +260,8 @@ private:
 struct SymbolMeta {
     uint16_t bid_levels = 0;   // number of active bid price levels
     uint16_t ask_levels = 0;   // number of active ask price levels
+    uint32_t _pad = 0;
+    uint64_t last_timestamp_ns = 0; // last observed tick timestamp
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,6 +331,10 @@ public:
         if (tick.symbol_idx >= Config::kSymbols) [[unlikely]] {
             ++_stat_rejected;
             return;
+        }
+
+        if (tick.timestamp > 0) {
+            _meta[tick.symbol_idx].last_timestamp_ns = tick.timestamp;
         }
 
         switch (tick.msg_type) {
@@ -436,6 +442,27 @@ public:
     [[nodiscard]] uint16_t ask_level_count(uint16_t sym) const noexcept {
         if (sym >= Config::kSymbols) return 0;
         return _meta[sym].ask_levels;
+    }
+
+    /// Check if the limit order book for a symbol is crossed (best_bid >= best_ask).
+    [[nodiscard]] bool is_crossed(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return false;
+        const int64_t bid = best_bid_price(sym);
+        const int64_t ask = best_ask_price(sym);
+        return (bid > 0 && ask > 0 && bid >= ask);
+    }
+
+    /// Check if market data for a symbol is stale based on a silence threshold.
+    [[nodiscard]] bool is_stale(uint16_t sym, uint64_t now_ns, uint64_t timeout_ns = 5'000'000'000ULL) const noexcept {
+        if (sym >= Config::kSymbols) return true;
+        if (_meta[sym].last_timestamp_ns == 0) return false;
+        return (now_ns > _meta[sym].last_timestamp_ns && (now_ns - _meta[sym].last_timestamp_ns) > timeout_ns);
+    }
+
+    /// Last observed tick timestamp in nanoseconds for a symbol.
+    [[nodiscard]] uint64_t last_update_time(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return 0;
+        return _meta[sym].last_timestamp_ns;
     }
 
     // ── Statistics ───────────────────────────────────────────────────────

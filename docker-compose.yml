@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  luv-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.dpdk
+    container_name: luv_engine
+    privileged: true
+    environment:
+      - LUV_ENV=staging
+      - LUV_MESSAGES=500000
+    ports:
+      - "9100:9100"
+      - "8080:8080"
+    volumes:
+      - ./data/audit:/var/log/luv/audit
+      - ./data/wal:/var/log/luv/wal
+    networks:
+      - luv-network
+
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: luv_prometheus
+    volumes:
+      - ./docs/prometheus_luv_scrape.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - luv-engine
+    networks:
+      - luv-network
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: luv_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./docs/grafana_luv_dashboard.json:/etc/grafana/provisioning/dashboards/luv_dashboard.json:ro
+    depends_on:
+      - prometheus
+    networks:
+      - luv-network
+
+networks:
+  luv-network:
+    driver: bridge
