@@ -347,7 +347,16 @@ public:
         packet.len = static_cast<uint16_t>(packet.len & pass_mask);
 
         if (decision.pass) [[likely]] {
-            if (!reserve_order_slot(intent)) {
+            if (!_reconciliation.register_order(intent.client_order_id,
+                                                intent.qty)) {
+                _rate_limiter.release();
+                decision.pass = 0;
+                decision.reject_mask |= exec::kRejectPosition;
+                packet.len = 0;
+                ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
+                _breaker.record_failure();
+            } else if (!reserve_order_slot(intent)) {
+                (void)_reconciliation.cancel(intent.client_order_id);
                 _rate_limiter.release();
                 decision.pass = 0;
                 decision.reject_mask |= exec::kRejectPosition;
@@ -358,6 +367,7 @@ public:
                                            intent.client_order_id,
                                            intent.price, intent.qty,
                                            0, intent.side, 'A')) {
+                (void)_reconciliation.cancel(intent.client_order_id);
                 release_order_slot(intent);
                 _rate_limiter.release();
                 decision.pass = 0;
@@ -374,21 +384,11 @@ public:
                     intent.price,
                     static_cast<uint8_t>(intent.side),
                     intent.now_ns})) {
+                (void)_reconciliation.cancel(intent.client_order_id);
                 release_order_slot(intent);
                 _rate_limiter.release();
                 decision.pass = 0;
                 decision.reject_mask |= exec::kRejectHalted;
-                packet.len = 0;
-                ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
-                _breaker.record_failure();
-            }
-            if (decision.pass &&
-                !_reconciliation.register_order(intent.client_order_id,
-                                                intent.qty)) {
-                release_order_slot(intent);
-                _rate_limiter.release();
-                decision.pass = 0;
-                decision.reject_mask |= exec::kRejectPosition;
                 packet.len = 0;
                 ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
                 _breaker.record_failure();

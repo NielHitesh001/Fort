@@ -197,6 +197,34 @@ void test_production_controls() {
     std::printf("  [OK] sequence gaps, circuit breaker, and rate limit\n");
 }
 
+void test_duplicate_order_id_fails_closed() {
+    std::printf("\n== Duplicate order ID admission ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+
+    luv::ExecutionGateway gateway;
+    assert(gateway.init(arena));
+    luv::exec::RiskLimits limits{};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 10'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    gateway.risk().set_limits(3, limits);
+
+    const auto intent = make_intent(now_ns());
+    luv::OutboundPacket packet{};
+    assert(gateway.try_build(intent, packet).pass == 1);
+
+    luv::OutboundPacket duplicate_packet{};
+    const auto duplicate = gateway.try_build(intent, duplicate_packet);
+    assert(duplicate.pass == 0);
+    assert(duplicate_packet.len == 0);
+    assert(arena.exec_states[3].risk.order_count == 1);
+    assert(arena.exec_states[3].orders[0].order_id == intent.client_order_id);
+
+    std::printf("  [OK] duplicate IDs do not remove the accepted order\n");
+}
+
 void test_gateway_fail_closed_controls() {
     std::printf("\n== Gateway fail-closed controls ==\n");
 
@@ -319,6 +347,7 @@ int main() {
     test_branchless_risk();
     test_ouch_template_and_gateway();
     test_production_controls();
+    test_duplicate_order_id_fails_closed();
     test_gateway_fail_closed_controls();
     test_audit_admission();
     benchmark_risk_core();
