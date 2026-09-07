@@ -2,11 +2,19 @@
 set -euo pipefail
 
 PROSPECT="${1:-Acme Treasury}"
-UPTIME="${UPTIME:-99.8}"
-P99_LATENCY="${P99_LATENCY:-0.84}"
-AUDIT_RECORDS="${AUDIT_RECORDS:-10847}"
+UPTIME="${UPTIME:-UNVERIFIED}"
+P99_LATENCY="${P99_LATENCY:-UNVERIFIED}"
+AUDIT_RECORDS="${AUDIT_RECORDS:-UNVERIFIED}"
 OUTPUT_PATH="${OUTPUT_PATH:-pilot_sla_report.html}"
 DATE_STAMP="${DATE_STAMP:-$(date +%F)}"
+
+format_percent() {
+  if [[ "$1" == "UNVERIFIED" ]]; then printf '%s' "$1"; else printf '%s%%' "$1"; fi
+}
+
+format_ms() {
+  if [[ "$1" == "UNVERIFIED" ]]; then printf '%s' "$1"; else printf '%sms' "$1"; fi
+}
 
 cat > "$OUTPUT_PATH" <<EOF
 <!doctype html>
@@ -26,10 +34,10 @@ cat > "$OUTPUT_PATH" <<EOF
     <h1>Pilot SLA Tracking</h1>
     <p><strong>Prospect:</strong> ${PROSPECT}</p>
     <p><strong>Date:</strong> ${DATE_STAMP}</p>
-    <div class="metric"><strong>Uptime:</strong> ${UPTIME}%</div>
-    <div class="metric"><strong>p99 Latency:</strong> ${P99_LATENCY}ms</div>
+    <div class="metric"><strong>Uptime:</strong> $(format_percent "$UPTIME")</div>
+    <div class="metric"><strong>p99 Latency:</strong> $(format_ms "$P99_LATENCY")</div>
     <div class="metric"><strong>Audit Continuity:</strong> ${AUDIT_RECORDS} records</div>
-    <div class="metric"><strong>Status:</strong> On track for pilot review</div>
+    <div class="metric"><strong>Status:</strong> Draft; attach source artifacts before external use</div>
   </div>
 </body>
 </html>

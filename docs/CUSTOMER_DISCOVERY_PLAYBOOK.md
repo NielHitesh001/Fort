@@ -35,7 +35,7 @@ Subject: Quick intro to [Target CTO / Treasury Head]?
 
 Hi [Network Contact],
 
-I'm building a real-time ITCH terminal and audit platform for institutional trading teams. It combines live market-data reconstruction, compliance-grade audit logging, and configurable strategy execution for pilot engagements.
+I'm exploring a real-time ITCH market-data and execution-observability prototype for institutional trading teams. It combines simulated market-data reconstruction, local tamper-evident audit primitives, and configurable strategy logic for discovery conversations.
 
 [Target Company] seems like a natural fit because [specific reason: treasury optimization, FX workflow, settlement latency, or compliance visibility].
 

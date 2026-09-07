@@ -72,7 +72,7 @@ Niel
 - The customer owns its data and trade records.
 - The provider does not hold customer funds or securities.
 - The provider only processes data in the customer's permitted environment or a hosted environment under explicit customer authorization.
-- The provider preserves immutable audit logs and export access for customer compliance review.
+- The provider offers local tamper-evident audit records and export access, subject to agreed retention, backup, access-control, and customer review requirements.
 - The provider's liability for pilot services is capped at a low pilot-phase amount such as $10,000.
 - The customer retains responsibility for trading decisions and external regulatory obligations.
 - The provider is not a broker, custodian, or exchange agent unless separately contracted and licensed.

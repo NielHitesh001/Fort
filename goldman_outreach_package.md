@@ -14,11 +14,19 @@ Hi [Name],
 
 I hope you’re doing well.
 
-I’m building a real-time ITCH terminal for institutional trading teams—a live order book engine with sub-millisecond processing and compliance-grade audit trails.
+I’m building a real-time ITCH market-data and execution-observability prototype
+for institutional trading technology teams. It currently runs in a controlled
+synthetic environment with local audit and recovery primitives; I’m looking to
+validate whether the workflow is useful to a real team.
 
-Goldman came to mind because your Trading Technology, Market Data, or operations teams likely care about real-time visibility and operational reliability. I think there’s a meaningful fit for a pilot around live market structure, execution observability, and compliance logging.
+Goldman came to mind because your Trading Technology, Market Data, or
+operations teams may care about real-time visibility and operational
+reliability. I’m exploring whether there is a fit for a controlled discovery
+or sandbox evaluation around market structure and execution observability.
 
-Would you be open to introducing me to the right person in Trading Technology, Market Data, or a relevant ops team? I’d love to show a 15-minute demo and see whether a 2-week pilot makes sense.
+Would you be open to introducing me to the right person in Trading Technology,
+Market Data, or a relevant ops team? I’d value a 15-minute demo and feedback
+on whether the problem is material enough for a sandbox evaluation.
 
 Happy to send a short overview if helpful.
 

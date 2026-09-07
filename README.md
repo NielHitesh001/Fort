@@ -166,6 +166,9 @@ maximum-throughput smoke test. Review the emitted telemetry and replay result
 after the run; this harness is synthetic validation, not live or regulatory
 approval.
 
+For the investor-facing scope, evidence boundaries, and open diligence items,
+see [INVESTOR_READINESS_BRIEF.md](INVESTOR_READINESS_BRIEF.md).
+
 ## Performance
 
 The repository contains `luv_latency_benchmark`, but no benchmark results are
