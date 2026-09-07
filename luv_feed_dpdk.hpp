@@ -19,6 +19,7 @@
 
 #include "luv_feed.hpp"
 #include "luv_decode_itch.hpp"
+#include "luv_safety.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -51,7 +52,7 @@ struct DpdkConfig {
     //   Ethernet(14) + IP(20) + UDP(8) + MoldUDP64 header(20) = 62 bytes
     //   Then each message within the MoldUDP64 session block is:
     //     [uint16_t big-endian length] [raw ITCH payload]
-    uint32_t    payload_offset = 62;
+    uint32_t    payload_offset = 42;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -178,6 +179,14 @@ public:
         return _total_bytes;
     }
 
+    [[nodiscard]] bool sequence_healthy() const noexcept {
+        return _sequence_breaker.allow();
+    }
+
+    [[nodiscard]] uint64_t sequence_gaps() const noexcept {
+        return _sequence.gaps();
+    }
+
 private:
     // ── Constants ────────────────────────────────────────────────────────
     static constexpr uint16_t kMaxBurst = 64;
@@ -191,6 +200,8 @@ private:
 
     uint64_t            _total_msgs   = 0;
     uint64_t            _total_bytes  = 0;
+    SequenceTracker     _sequence{};
+    CircuitBreaker      _sequence_breaker{1};
 
     // ── Process a single mbuf ────────────────────────────────────────────
     //
@@ -207,7 +218,8 @@ private:
 
     uint32_t process_mbuf(struct rte_mbuf* mbuf) noexcept {
         const uint32_t pkt_len = rte_pktmbuf_pkt_len(mbuf);
-        if (pkt_len <= _cfg.payload_offset) [[unlikely]] {
+        if (!_sequence_breaker.allow() ||
+            pkt_len < _cfg.payload_offset + 20) [[unlikely]] {
             return 0;  // runt packet or header-only
         }
 
@@ -217,8 +229,18 @@ private:
 
         _total_bytes += pkt_len;
 
-        // Iterate over MoldUDP64 message block
-        uint32_t offset = 0;
+        // MoldUDP64 header: session[10], sequence[8], message_count[2].
+        const uint64_t sequence = detail::be64(payload + 10);
+        const SequenceResult result = _sequence.observe(sequence);
+        if (result == SequenceResult::kGap ||
+            result == SequenceResult::kOutOfOrder ||
+            result == SequenceResult::kDuplicate) {
+            _sequence_breaker.trip();
+            return 0;
+        }
+
+        // Iterate over the MoldUDP64 message block.
+        uint32_t offset = 20;
         uint32_t decoded = 0;
 
         while (offset + 2 <= payload_len) {
@@ -304,6 +326,9 @@ public:
     [[nodiscard]] uint64_t total_bytes() const noexcept override {
         return 0;
     }
+
+    [[nodiscard]] bool sequence_healthy() const noexcept { return false; }
+    [[nodiscard]] uint64_t sequence_gaps() const noexcept { return 0; }
 };
 
 #endif  // LUV_USE_DPDK

@@ -21,6 +21,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <shared_mutex>
 #include <sys/mman.h>
 
 #include "luv_arena.hpp"
@@ -133,6 +135,11 @@ public:
     //  Returns true on success.  The table is sized to the physical maximum
     //  number of orders that can be represented in the LOB slab.
     bool insert(uint64_t order_ref, const OrderLocation& loc) noexcept {
+        if (order_ref == kEmptyKey || order_ref == kTombstone ||
+            loc.symbol_idx >= Config::kSymbols || loc.side > 1 ||
+            loc.level_idx >= Config::kLevelsPerSide || loc.slot_idx < 0 ||
+            loc.slot_idx >= static_cast<int32_t>(Config::kMaxOrdersPerLevel))
+            return false;
         uint32_t slot = hash(order_ref);
 
         // Probe for an existing entry or an empty/tombstone slot.
@@ -230,6 +237,11 @@ private:
     static constexpr uint32_t kShift  = 64 - __builtin_ctz(kCapacity);
 
     [[nodiscard]] static uint32_t hash(uint64_t key) noexcept {
+        key ^= key >> 30;
+        key *= 0xBF58476D1CE4E5B9ULL;
+        key ^= key >> 27;
+        key *= 0x94D049BB133111EBULL;
+        key ^= key >> 31;
         return static_cast<uint32_t>((key * kFibMul) >> kShift);
     }
 
@@ -292,6 +304,7 @@ public:
         _stat_deletes  = 0;
         _stat_replaces = 0;
         _stat_trades   = 0;
+        _stat_rejected = 0;
 
         return true;
     }
@@ -308,24 +321,54 @@ public:
     /// handler based on msg_type.  Messages for unknown types are silently
     /// ignored.
     void process(const TickMsg& tick) noexcept {
-        if (tick.symbol_idx >= Config::kSymbols) [[unlikely]] return;
+        std::unique_lock<std::shared_mutex> lock(_mutex);
+        process_unlocked(tick);
+    }
+
+    void process_unlocked(const TickMsg& tick) noexcept {
+        if (tick.symbol_idx >= Config::kSymbols) [[unlikely]] {
+            ++_stat_rejected;
+            return;
+        }
 
         switch (tick.msg_type) {
         case itch::kAddOrder:       // 'A' — Add Order (no MPID)
         case itch::kAddOrderMPID:   // 'F' — Add Order (with MPID)
+            if (tick.order_ref == 0 || tick.qty <= 0 || tick.price <= 0) {
+                ++_stat_rejected;
+                return;
+            }
             on_add_order(tick);
             break;
         case itch::kOrderExecuted:  // 'E' — Order Executed
         case itch::kOrderExecPrice: // 'C' — Order Executed w/ Price
+            if (tick.order_ref == 0 || tick.qty <= 0) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_executed(tick);
             break;
         case itch::kOrderCancel:    // 'X' — Order Cancel
+            if (tick.order_ref == 0 || tick.qty <= 0) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_cancel(tick);
             break;
         case itch::kOrderDelete:    // 'D' — Order Delete
+            if (tick.order_ref == 0) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_delete(tick);
             break;
         case itch::kOrderReplace:   // 'U' — Order Replace
+            if (tick.order_ref == 0 || tick.match_num == 0 ||
+                tick.order_ref == tick.match_num || tick.qty <= 0 ||
+                tick.price <= 0) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_replace(tick);
             break;
         case itch::kTrade:          // 'P' — Trade (non-cross)
@@ -342,12 +385,24 @@ public:
 
     /// Best bid price (highest bid), or 0 if no bids.
     [[nodiscard]] int64_t best_bid_price(uint16_t sym) const noexcept {
+        std::shared_lock<std::shared_mutex> lock(_mutex);
+        if (sym >= Config::kSymbols) return 0;
+        return best_bid_price_unlocked(sym);
+    }
+
+    [[nodiscard]] int64_t best_ask_price(uint16_t sym) const noexcept {
+        std::shared_lock<std::shared_mutex> lock(_mutex);
+        if (sym >= Config::kSymbols) return 0;
+        return best_ask_price_unlocked(sym);
+    }
+
+    [[nodiscard]] int64_t best_bid_price_unlocked(uint16_t sym) const noexcept {
         if (_meta[sym].bid_levels == 0) return 0;
         return _arena->level(sym, 0, 0).price;  // bids sorted descending
     }
 
     /// Best ask price (lowest ask), or 0 if no asks.
-    [[nodiscard]] int64_t best_ask_price(uint16_t sym) const noexcept {
+    [[nodiscard]] int64_t best_ask_price_unlocked(uint16_t sym) const noexcept {
         if (_meta[sym].ask_levels == 0) return 0;
         return _arena->level(sym, 1, 0).price;  // asks sorted ascending
     }
@@ -355,22 +410,28 @@ public:
     /// Mid-price = (best_bid + best_ask) / 2.  Returns 0 if either side empty.
     /// Note: returns integer division — caller may want ×2 for precision.
     [[nodiscard]] int64_t mid_price(uint16_t sym) const noexcept {
-        const int64_t bid = best_bid_price(sym);
-        const int64_t ask = best_ask_price(sym);
+        std::shared_lock<std::shared_mutex> lock(_mutex);
+        if (sym >= Config::kSymbols) return 0;
+        const int64_t bid = best_bid_price_unlocked(sym);
+        const int64_t ask = best_ask_price_unlocked(sym);
         if (bid == 0 || ask == 0) return 0;
         return (bid + ask) / 2;
     }
 
     /// Spread = best_ask - best_bid.  Returns 0 if either side empty.
     [[nodiscard]] int64_t spread(uint16_t sym) const noexcept {
-        const int64_t bid = best_bid_price(sym);
-        const int64_t ask = best_ask_price(sym);
+        std::shared_lock<std::shared_mutex> lock(_mutex);
+        if (sym >= Config::kSymbols) return 0;
+        const int64_t bid = best_bid_price_unlocked(sym);
+        const int64_t ask = best_ask_price_unlocked(sym);
         if (bid == 0 || ask == 0) return 0;
         return ask - bid;
     }
 
     /// Sum of total_qty across the top `levels` bid levels.
     [[nodiscard]] int64_t bid_depth_qty(uint16_t sym, uint32_t levels) const noexcept {
+        std::shared_lock<std::shared_mutex> lock(_mutex);
+        if (sym >= Config::kSymbols) return 0;
         const uint32_t n = (levels < _meta[sym].bid_levels)
                          ? levels : _meta[sym].bid_levels;
         int64_t total = 0;
@@ -381,6 +442,8 @@ public:
 
     /// Sum of total_qty across the top `levels` ask levels.
     [[nodiscard]] int64_t ask_depth_qty(uint16_t sym, uint32_t levels) const noexcept {
+        std::shared_lock<std::shared_mutex> lock(_mutex);
+        if (sym >= Config::kSymbols) return 0;
         const uint32_t n = (levels < _meta[sym].ask_levels)
                          ? levels : _meta[sym].ask_levels;
         int64_t total = 0;
@@ -407,6 +470,7 @@ public:
     [[nodiscard]] uint64_t total_deletes()  const noexcept { return _stat_deletes;  }
     [[nodiscard]] uint64_t total_replaces() const noexcept { return _stat_replaces; }
     [[nodiscard]] uint64_t total_trades()   const noexcept { return _stat_trades;   }
+    [[nodiscard]] uint64_t rejected_events() const noexcept { return _stat_rejected; }
 
     [[nodiscard]] uint32_t active_order_count() const noexcept {
         return _order_map.size();
@@ -422,6 +486,7 @@ public:
 
 private:
     Arena*      _arena = nullptr;
+    mutable std::shared_mutex _mutex;
     OrderRefMap _order_map;
     SymbolMeta  _meta[Config::kSymbols];
 
@@ -432,6 +497,7 @@ private:
     uint64_t _stat_deletes  = 0;
     uint64_t _stat_replaces = 0;
     uint64_t _stat_trades   = 0;
+    uint64_t _stat_rejected = 0;
 
     // ═════════════════════════════════════════════════════════════════════════
     //  Price Level Management
@@ -601,6 +667,22 @@ private:
         return (requested < available) ? requested : available;
     }
 
+    [[nodiscard]] bool valid_location(uint64_t order_ref,
+                                      const OrderLocation& loc) const noexcept
+    {
+        if (loc.symbol_idx >= Config::kSymbols || loc.side > 1 ||
+            loc.level_idx >= level_count(loc.symbol_idx, loc.side) ||
+            loc.slot_idx < 0 ||
+            loc.slot_idx >= static_cast<int32_t>(Config::kMaxOrdersPerLevel))
+            return false;
+
+        const PriceLevel& lvl = _arena->level(
+            loc.symbol_idx, loc.side, loc.level_idx);
+        const OrderSlot& slot = lvl.orders[loc.slot_idx];
+        return slot.is_active() && slot.order_id == order_ref &&
+               slot.qty >= 0 && lvl.total_qty >= 0 && lvl.order_count > 0;
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     //  Message Handlers
     // ═════════════════════════════════════════════════════════════════════════
@@ -614,6 +696,8 @@ private:
     //  5. Insert into OrderRefMap
     void on_add_order(const TickMsg& tick) noexcept {
         ++_stat_adds;
+
+        if (_order_map.lookup(tick.order_ref)) [[unlikely]] return;
 
         const uint16_t sym  = tick.symbol_idx;
         const uint8_t  side = (tick.flags & tick_flags::kBuy) ? 0 : 1;  // 0=bid, 1=ask
@@ -670,7 +754,7 @@ private:
         ++_stat_executes;
 
         OrderLocation* loc = _order_map.lookup(tick.order_ref);
-        if (!loc) [[unlikely]] return;  // stale or unknown ref
+        if (!loc || !valid_location(tick.order_ref, *loc)) [[unlikely]] return;
 
         PriceLevel& lvl = _arena->level(
             loc->symbol_idx, loc->side, loc->level_idx);
@@ -704,7 +788,7 @@ private:
         ++_stat_cancels;
 
         OrderLocation* loc = _order_map.lookup(tick.order_ref);
-        if (!loc) [[unlikely]] return;
+        if (!loc || !valid_location(tick.order_ref, *loc)) [[unlikely]] return;
 
         PriceLevel& lvl = _arena->level(
             loc->symbol_idx, loc->side, loc->level_idx);
@@ -736,14 +820,14 @@ private:
         ++_stat_deletes;
 
         OrderLocation* loc = _order_map.lookup(tick.order_ref);
-        if (!loc) [[unlikely]] return;
+        if (!loc || !valid_location(tick.order_ref, *loc)) [[unlikely]] return;
 
         PriceLevel& lvl = _arena->level(
             loc->symbol_idx, loc->side, loc->level_idx);
         OrderSlot& slot = lvl.orders[loc->slot_idx];
 
-        // Subtract the full remaining quantity
-        lvl.total_qty -= slot.qty;
+        // Prevent a corrupted aggregate from wrapping below zero.
+        lvl.total_qty -= clamped_qty(slot.qty, lvl.total_qty);
 
         unlink_slot(lvl, loc->slot_idx);
         deactivate_slot(slot);
@@ -772,12 +856,23 @@ private:
 
         // Look up the original order to determine its side
         const OrderLocation* orig_loc = _order_map.lookup(tick.order_ref);
-        if (!orig_loc) [[unlikely]] return;
+        if (!orig_loc || !valid_location(tick.order_ref, *orig_loc)) [[unlikely]] return;
+        if (_order_map.lookup(tick.match_num) != nullptr) [[unlikely]] return;
 
         // Save the side before deleting (the pointer may be invalidated
         // after remove if it triggers a level removal)
         const uint8_t  saved_side = orig_loc->side;
         const uint16_t saved_sym  = orig_loc->symbol_idx;
+
+        const int32_t target_level = find_level(
+            saved_sym, saved_side, tick.price);
+        if (target_level < 0 &&
+            level_count(saved_sym, saved_side) >= Config::kLevelsPerSide)
+            return;
+        if (target_level >= 0 &&
+            static_cast<uint16_t>(target_level) != orig_loc->level_idx &&
+            _arena->level(saved_sym, saved_side, target_level).alloc_slot() < 0)
+            return;
 
         // ── Delete the original order ────────────────────────────────────
         {
@@ -785,7 +880,7 @@ private:
                 orig_loc->symbol_idx, orig_loc->side, orig_loc->level_idx);
             OrderSlot& slot = lvl.orders[orig_loc->slot_idx];
 
-            lvl.total_qty -= slot.qty;
+            lvl.total_qty -= clamped_qty(slot.qty, lvl.total_qty);
             unlink_slot(lvl, orig_loc->slot_idx);
             deactivate_slot(slot);
             lvl.order_count -= 1;

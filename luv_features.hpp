@@ -27,6 +27,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
+#include <shared_mutex>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -211,6 +213,7 @@ public:
     //  This function is on the critical path — it must be as fast as possible.
     //  All branches are organised for the common (warm) case.
     void update(uint16_t sym, const TickMsg& tick) noexcept {
+        std::unique_lock<std::shared_mutex> lock(_mutex);
         // ── Bounds check ────────────────────────────────────────────────
         if (sym >= Config::kSymbols) [[unlikely]] return;
 
@@ -382,23 +385,37 @@ public:
     [[nodiscard]] bool is_initialised() const noexcept { return _initialised; }
 
     // Access per-symbol state (for diagnostics / testing)
-    [[nodiscard]] const SymbolState& state(uint16_t sym) const noexcept {
+    [[nodiscard]] SymbolState state(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return SymbolState{};
+        std::shared_lock<std::shared_mutex> lock(_mutex);
         return _state[sym];
+    }
+
+    void copy_state(uint16_t sym, SymbolState& out) const noexcept {
+        if (sym >= Config::kSymbols) return;
+        std::shared_lock<std::shared_mutex> lock(_mutex);
+        out = _state[sym];
     }
 
     // Get the most recent cursor position for a symbol (points to the NEXT
     // write position, so the most recent write is at (cursor - 1) & mask).
     [[nodiscard]] uint32_t current_cursor(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return 0;
+        std::shared_lock<std::shared_mutex> lock(_mutex);
         return _state[sym].cursor;
     }
 
     // Get the number of ticks processed for a symbol
     [[nodiscard]] uint32_t tick_count(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return 0;
+        std::shared_lock<std::shared_mutex> lock(_mutex);
         return _state[sym].tick_count;
     }
 
     // Check if a symbol's lookback buffer is fully warm
     [[nodiscard]] bool is_warm(uint16_t sym) const noexcept {
+        if (sym >= Config::kSymbols) return false;
+        std::shared_lock<std::shared_mutex> lock(_mutex);
         return _state[sym].warm;
     }
 
@@ -430,6 +447,7 @@ private:
     // Per-symbol state — inline allocated, no dynamic memory.
     // Config::kSymbols × sizeof(SymbolState) ≈ 512 × 1096 = ~548 KB
     SymbolState _state[Config::kSymbols];
+    mutable std::shared_mutex _mutex;
 };
 
 }  // namespace luv

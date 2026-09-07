@@ -8,6 +8,8 @@
 // trading hot path.
 
 #include <atomic>
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -48,6 +50,10 @@ static_assert(sizeof(TelemetryPacket) == 192,
 
 class TelemetryPublisher {
 public:
+    [[nodiscard]] static uint64_t dropped(const Arena& arena) noexcept {
+        return arena.telemetry_drops.load(std::memory_order_relaxed);
+    }
+
     [[nodiscard]] static bool publish_heartbeat(
         Arena& arena,
         uint32_t tick_rate_hz,
@@ -55,7 +61,10 @@ public:
         float risk_ns) noexcept
     {
         TelemSnapshot* slot = arena.telem_ring.try_claim();
-        if (!slot) [[unlikely]] return false;
+        if (!slot) [[unlikely]] {
+            arena.telemetry_drops.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
 
         TelemSnapshot snap {};
         snap.timestamp_ns = now_ns();
@@ -85,7 +94,10 @@ public:
                                       const TelemSnapshot& snapshot) noexcept
     {
         TelemSnapshot* slot = arena.telem_ring.try_claim();
-        if (!slot) [[unlikely]] return false;
+        if (!slot) [[unlikely]] {
+            arena.telemetry_drops.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
         *slot = snapshot;
         arena.telem_ring.commit();
         return true;
@@ -98,6 +110,108 @@ private:
         return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL
              + static_cast<uint64_t>(ts.tv_nsec);
     }
+};
+
+struct TelemetryBatch {
+    uint64_t timestamp_ns = 0;
+    uint32_t orders_sent = 0;
+    uint32_t orders_approved = 0;
+    uint32_t orders_rejected = 0;
+    uint32_t orders_acked = 0;
+    uint32_t orders_filled = 0;
+    uint32_t orders_canceled = 0;
+    int64_t position = 0;
+    int64_t notional = 0;
+    uint64_t latency_p50_ns = 0;
+    uint64_t latency_p99_ns = 0;
+    uint64_t latency_p999_ns = 0;
+};
+
+template <uint32_t MaxLatencies = 10'000>
+class TelemetryBatchCollector {
+public:
+    static_assert(MaxLatencies > 0, "Telemetry latency capacity must be non-zero");
+
+    void record_order_sent() noexcept { ++_batch.orders_sent; }
+    void record_order_check(bool approved) noexcept {
+        if (approved) ++_batch.orders_approved;
+        else ++_batch.orders_rejected;
+    }
+    void record_ack() noexcept { ++_batch.orders_acked; }
+    void record_fill(int64_t notional) noexcept {
+        ++_batch.orders_filled;
+        _batch.notional += notional;
+    }
+    void record_cancellation() noexcept { ++_batch.orders_canceled; }
+    void set_position(int64_t position) noexcept { _batch.position = position; }
+
+    void record_latency(uint64_t latency_ns) noexcept {
+        if (_latency_count < MaxLatencies)
+            _latencies[_latency_count++] = latency_ns;
+        else
+            ++_dropped_latencies;
+    }
+
+    [[nodiscard]] bool flush(Arena& arena) noexcept {
+        TelemSnapshot* slot = arena.telem_ring.try_claim();
+        if (!slot) {
+            arena.telemetry_drops.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+
+        std::sort(_latencies.begin(), _latencies.begin() + _latency_count);
+        _batch.timestamp_ns = now_ns();
+        _batch.latency_p50_ns = percentile(50);
+        _batch.latency_p99_ns = percentile(99);
+        _batch.latency_p999_ns = percentile(999);
+
+        TelemSnapshot snapshot{};
+        snapshot.timestamp_ns = _batch.timestamp_ns;
+        snapshot.session_pnl = _batch.notional;
+        snapshot.gross_exposure = _batch.notional;
+        snapshot.fill_count = static_cast<int32_t>(_batch.orders_filled);
+        snapshot.reject_count = static_cast<int32_t>(_batch.orders_rejected);
+        const uint32_t closed = _batch.orders_filled + _batch.orders_canceled;
+        snapshot.active_orders = closed < _batch.orders_approved
+                               ? _batch.orders_approved - closed
+                               : 0;
+        snapshot.inference_us = static_cast<float>(_batch.latency_p50_ns) / 1000.0f;
+        snapshot.risk_ns = static_cast<float>(_batch.latency_p99_ns) / 1000.0f;
+        *slot = snapshot;
+        arena.telem_ring.commit();
+        _batch = TelemetryBatch{};
+        _latency_count = 0;
+        return true;
+    }
+
+    [[nodiscard]] const TelemetryBatch& batch() const noexcept { return _batch; }
+    [[nodiscard]] uint32_t dropped_latencies() const noexcept {
+        return _dropped_latencies;
+    }
+
+private:
+    [[nodiscard]] uint64_t percentile(uint32_t rank) const noexcept {
+        if (_latency_count == 0) return 0;
+        const uint32_t denominator = rank >= 1000 ? 1000 : 100;
+        const uint64_t index =
+            (static_cast<uint64_t>(_latency_count) * rank + denominator - 1) /
+            denominator;
+        return _latencies[static_cast<size_t>(
+            index == 0 ? 0 : std::min(index - 1,
+                                      static_cast<uint64_t>(_latency_count - 1)))];
+    }
+
+    [[nodiscard]] static uint64_t now_ns() noexcept {
+        struct timespec ts{};
+        ::clock_gettime(CLOCK_MONOTONIC, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
+               static_cast<uint64_t>(ts.tv_nsec);
+    }
+
+    TelemetryBatch _batch{};
+    std::array<uint64_t, MaxLatencies> _latencies{};
+    uint32_t _latency_count = 0;
+    uint32_t _dropped_latencies = 0;
 };
 
 class TelemetryBridge {

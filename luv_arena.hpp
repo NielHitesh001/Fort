@@ -68,6 +68,11 @@ static constexpr size_t kHugePage   = 2 * 1024 * 1024;
     return (n + align - 1) & ~(align - 1);
 }
 
+[[nodiscard]] constexpr bool can_align_up(size_t n, size_t align) noexcept {
+    return align != 0 && (align & (align - 1)) == 0 &&
+           n <= SIZE_MAX - (align - 1);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Order slot — 32 bytes, intrusive doubly-linked list by index
 //  Price level — one 576-byte cache-aligned slab per (symbol, side, level)
@@ -240,6 +245,7 @@ struct alignas(kCacheLine) SPSCRing {
 
     // ── Producer (single writer) ──────────────────────────────────────────
     [[nodiscard]] T* try_claim() noexcept {
+        if (!slots) [[unlikely]] return nullptr;
         const uint64_t h = head.load(std::memory_order_relaxed);
         if (h - tail.load(std::memory_order_acquire) >= Capacity) [[unlikely]]
             return nullptr;  // full
@@ -252,6 +258,7 @@ struct alignas(kCacheLine) SPSCRing {
 
     // ── Consumer (single reader) ──────────────────────────────────────────
     [[nodiscard]] T* try_peek() noexcept {
+        if (!slots) [[unlikely]] return nullptr;
         const uint64_t t = tail.load(std::memory_order_relaxed);
         if (head.load(std::memory_order_acquire) == t) [[unlikely]]
             return nullptr;  // empty
@@ -327,6 +334,7 @@ public:
     std::span<SignalOutput>  signal_slots;
     std::span<SymbolExecState> exec_states;
     std::span<TelemSnapshot> telem_slots;
+    std::atomic<uint64_t> telemetry_drops{0};
 
     // SPSC ring heads (slots pointers wired to the spans above after init)
     SPSCRing<TickMsg,       Config::kTickCapacity>  tick_ring;
@@ -349,6 +357,8 @@ public:
         if (_base) return false;  // already initialised
 
         const size_t total = slab_sizes::kGrandTotal;
+        if (!can_align_up(slab_sizes::kInfraRaw, kHugePage) || total == 0)
+            return false;
 
         // Single mmap — huge-page backed where the kernel allows it
         void* mem = ::mmap(

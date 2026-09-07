@@ -12,7 +12,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cerrno>
 #include <fcntl.h>
+#include <limits.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -89,6 +91,10 @@ public:
             return false;
         }
 
+        if (st.st_size <= 0) {
+            ::close(fd);
+            return false;
+        }
         const size_t file_size = static_cast<size_t>(st.st_size);
         if (file_size < sizeof(ai::ModelHeader) ||
             file_size > _arena->ai_region_size) {
@@ -96,21 +102,12 @@ public:
             return false;
         }
 
-        void* mapped = ::mmap(
-            _arena->ai_region,
-            file_size,
-            PROT_READ,
-            MAP_PRIVATE | MAP_FIXED,
-            fd,
-            0
-        );
-        ::close(fd);
-
-        if (mapped == MAP_FAILED || mapped != _arena->ai_region) {
+        if (!read_model_bytes(fd, file_size)) {
+            ::close(fd);
             return false;
         }
-
-        _model_base = static_cast<const uint8_t*>(mapped);
+        ::close(fd);
+        _model_base = static_cast<const uint8_t*>(_arena->ai_region);
         _model_size = file_size;
         _header = reinterpret_cast<const ai::ModelHeader*>(_model_base);
         _kind = static_cast<ai::ModelKind>(_header->kind);
@@ -136,7 +133,13 @@ public:
         const char* predict_symbol = "luv_treelite_predict") noexcept
     {
 #if defined(__unix__) || defined(__APPLE__)
+#if !defined(LUV_ENABLE_DYNAMIC_MODEL_LOADING)
+    (void)path;
+    (void)predict_symbol;
+    return false;
+#else
         if (!_arena || !path || !predict_symbol) return false;
+    if (!secure_library_path(path)) return false;
 
         if (!map_artifact_bytes(path)) return false;
 
@@ -154,6 +157,7 @@ public:
         _kind = ai::ModelKind::kTreeliteSharedObject;
         _model_id = 1;
         return true;
+    #endif
 #else
         (void)path;
         (void)predict_symbol;
@@ -260,30 +264,54 @@ private:
             return false;
         }
 
+        if (st.st_size <= 0) {
+            ::close(fd);
+            return false;
+        }
         const size_t file_size = static_cast<size_t>(st.st_size);
         if (file_size == 0 || file_size > _arena->ai_region_size) {
             ::close(fd);
             return false;
         }
 
-        void* mapped = ::mmap(
-            _arena->ai_region,
-            file_size,
-            PROT_READ,
-            MAP_PRIVATE | MAP_FIXED,
-            fd,
-            0
-        );
-        ::close(fd);
-
-        if (mapped == MAP_FAILED || mapped != _arena->ai_region)
+        if (!read_model_bytes(fd, file_size)) {
+            ::close(fd);
             return false;
-
-        _model_base = static_cast<const uint8_t*>(mapped);
+        }
+        ::close(fd);
+        _model_base = static_cast<const uint8_t*>(_arena->ai_region);
         _model_size = file_size;
         _header = nullptr;
         _weights = nullptr;
         return true;
+    }
+
+    [[nodiscard]] bool read_model_bytes(int fd, size_t bytes) noexcept {
+        auto* destination = static_cast<uint8_t*>(_arena->ai_region);
+        size_t offset = 0;
+        while (offset < bytes) {
+            const ssize_t count = ::pread(fd, destination + offset,
+                                          bytes - offset,
+                                          static_cast<off_t>(offset));
+            if (count < 0) {
+                if (errno == EINTR) continue;
+                return false;
+            }
+            if (count == 0) return false;
+            offset += static_cast<size_t>(count);
+        }
+        return true;
+    }
+
+    [[nodiscard]] static bool secure_library_path(const char* path) noexcept {
+        if (!path || path[0] != '/') return false;
+        char resolved[PATH_MAX]{};
+        if (!::realpath(path, resolved)) return false;
+        struct stat st{};
+        if (::stat(resolved, &st) != 0 || !S_ISREG(st.st_mode)) return false;
+        if (st.st_uid != ::geteuid() || (st.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+            return false;
+        return std::strstr(resolved, "/../") == nullptr;
     }
 
     [[nodiscard]] float infer_linear(const FeatureRow& row) const noexcept {
