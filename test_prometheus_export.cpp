@@ -11,6 +11,13 @@
 
 namespace {
 
+uint64_t now_ns() {
+    timespec ts {};
+    ::clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
+           static_cast<uint64_t>(ts.tv_nsec);
+}
+
 void test_metrics_http_server() {
     luv::TelemSnapshot snapshot{};
     snapshot.session_pnl = 12345;
@@ -48,6 +55,46 @@ void test_metrics_http_server() {
     assert(response.find("luv_session_pnl 12345") != std::string::npos);
 }
 
+void test_health_check_harness() {
+    luv::TelemSnapshot snapshot{};
+    snapshot.active_orders = 12;
+    snapshot.halted = 0;
+
+    const uint64_t now = now_ns();
+    const auto healthy = luv::run_health_checks(
+        snapshot,
+        now - 20'000'000ULL,
+        25ULL,
+        1'500'000'000ULL,
+        1'500'000'000ULL,
+        35.0,
+        1000U,
+        2'000'000'000ULL,
+        1'000'000'000ULL,
+        80.0);
+    assert(healthy.feed_fresh);
+    assert(healthy.lob_consistent);
+    assert(healthy.execution_backlog);
+    assert(healthy.memory_ok);
+    assert(healthy.disk_space_ok);
+    assert(healthy.cpu_usage_ok);
+
+    const auto stale = luv::run_health_checks(
+        snapshot,
+        now - 250'000'000ULL,
+        1250ULL,
+        1'500'000'000ULL,
+        1'500'000'000ULL,
+        90.0,
+        1000U,
+        2'000'000'000ULL,
+        1'000'000'000ULL,
+        80.0);
+    assert(!stale.feed_fresh);
+    assert(!stale.execution_backlog);
+    assert(!stale.cpu_usage_ok);
+}
+
 }  // namespace
 
 int main() {
@@ -77,5 +124,7 @@ int main() {
     std::printf("[OK] Prometheus export format\n");
     test_metrics_http_server();
     std::printf("[OK] HTTP /metrics endpoint\n");
+    test_health_check_harness();
+    std::printf("[OK] health checks\n");
     return 0;
 }

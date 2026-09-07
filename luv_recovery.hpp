@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -116,24 +117,36 @@ public:
                               uint32_t& count) noexcept {
         count = 0;
         if (_fd < 0 || !output || capacity == 0) return false;
-        if (::lseek(_fd, 0, SEEK_SET) < 0) return false;
+        struct stat metadata{};
+        if (::fstat(_fd, &metadata) != 0 ||
+            metadata.st_size % static_cast<off_t>(sizeof(RecoveryRecord)) != 0)
+            return false;
+        if (metadata.st_size == 0) return true;
 
-        RecoveryRecord record{};
+        const size_t bytes = static_cast<size_t>(metadata.st_size);
+        const void* mapped = ::mmap(nullptr, bytes, PROT_READ, MAP_PRIVATE,
+                                    _fd, 0);
+        if (mapped == MAP_FAILED) return false;
+
+        const auto* records = static_cast<const RecoveryRecord*>(mapped);
+        const uint64_t record_count = bytes / sizeof(RecoveryRecord);
         uint64_t expected_sequence = 0;
-        while (true) {
-            const ssize_t bytes = ::read(_fd, &record, sizeof(record));
-            if (bytes == 0) break;
-            if (bytes < 0 && errno == EINTR) continue;
-            if (bytes != static_cast<ssize_t>(sizeof(record)) ||
-                record.magic != 0x31564352 ||
+        for (uint64_t index = 0; index < record_count; ++index) {
+            const RecoveryRecord& record = records[index];
+            if (record.magic != 0x31564352 ||
                 record.version != kRecoveryRecordVersion ||
                 record.sequence != expected_sequence ||
-                checksum(record) != record.checksum)
+                checksum(record) != record.checksum) {
+                ::munmap(const_cast<RecoveryRecord*>(records), bytes);
                 return false;
-            if (!apply(record, output, capacity, count)) return false;
+            }
+            if (!apply(record, output, capacity, count)) {
+                ::munmap(const_cast<RecoveryRecord*>(records), bytes);
+                return false;
+            }
             ++expected_sequence;
         }
-        if (::lseek(_fd, 0, SEEK_END) < 0) return false;
+        ::munmap(const_cast<RecoveryRecord*>(records), bytes);
         return true;
     }
 

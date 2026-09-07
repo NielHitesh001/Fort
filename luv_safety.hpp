@@ -13,6 +13,8 @@
 
 #if defined(__APPLE__)
 #include <CommonCrypto/CommonDigest.h>
+#else
+#include <openssl/sha.h>
 #endif
 
 namespace luv {
@@ -86,7 +88,12 @@ public:
                          sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash));
         CC_SHA256_Final(event.hash, &ctx);
 #else
-        return false;
+        SHA256_CTX ctx;
+        SHA256_Init(&ctx);
+        SHA256_Update(&ctx, event.previous_hash, sizeof(event.previous_hash));
+        SHA256_Update(&ctx, &event.sequence,
+                      sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash));
+        SHA256_Final(event.hash, &ctx);
 #endif
 
         if (!write_all(&event, sizeof(event))) return false;
@@ -143,7 +150,14 @@ private:
         CC_SHA256_Final(expected.data(), &ctx);
         return std::memcmp(expected.data(), event.hash, expected.size()) == 0;
 #else
-        return false;
+        std::array<uint8_t, 32> expected{};
+        SHA256_CTX ctx;
+        SHA256_Init(&ctx);
+        SHA256_Update(&ctx, event.previous_hash, sizeof(event.previous_hash));
+        SHA256_Update(&ctx, &event.sequence,
+                      sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash));
+        SHA256_Final(expected.data(), &ctx);
+        return std::memcmp(expected.data(), event.hash, expected.size()) == 0;
 #endif
     }
 
@@ -241,31 +255,71 @@ enum class SequenceResult : uint8_t {
     kOutOfOrder,
 };
 
+enum class SequenceGapClass : uint8_t {
+    kNone = 0,
+    kRecoverable,
+    kFatal,
+};
+
 class SequenceTracker {
 public:
+    static constexpr uint64_t kMaxRecoverableGap = 100;
+
     [[nodiscard]] SequenceResult observe(uint64_t sequence) noexcept {
         if (!_initialized) {
             _initialized = true;
             _next = sequence + 1;
+            _last = sequence;
             return SequenceResult::kFirst;
         }
         if (sequence == _next) {
             ++_next;
+            _last = sequence;
             return SequenceResult::kNext;
         }
         if (sequence < _next)
             return sequence + 1 == _next
                 ? SequenceResult::kDuplicate
                 : SequenceResult::kOutOfOrder;
-        _gaps += sequence - _next;
+        const uint64_t gap = sequence - _next;
+        _gaps += gap;
+        _last = sequence;
+        _gap_size = gap;
+        _gap_class = gap <= kMaxRecoverableGap
+                    ? SequenceGapClass::kRecoverable
+                    : SequenceGapClass::kFatal;
+        _gap_pending = _gap_class == SequenceGapClass::kRecoverable;
+        _invalid = _gap_class == SequenceGapClass::kFatal;
         _next = sequence + 1;
         return SequenceResult::kGap;
+    }
+
+    [[nodiscard]] bool gap_pending() const noexcept { return _gap_pending; }
+    [[nodiscard]] bool invalid() const noexcept { return _invalid; }
+    [[nodiscard]] SequenceGapClass gap_class() const noexcept {
+        return _gap_class;
+    }
+    [[nodiscard]] uint64_t last_gap_size() const noexcept { return _gap_size; }
+
+    [[nodiscard]] bool acknowledge_retransmit(
+        uint64_t first_missing, uint64_t last_missing) noexcept {
+        if (!_gap_pending || first_missing > last_missing ||
+            last_missing - first_missing + 1 != _gap_size) return false;
+        _gap_pending = false;
+        _gap_class = SequenceGapClass::kNone;
+        _gap_size = 0;
+        return true;
     }
 
     void reset() noexcept {
         _initialized = false;
         _next = 0;
+        _last = 0;
         _gaps = 0;
+        _gap_size = 0;
+        _gap_class = SequenceGapClass::kNone;
+        _gap_pending = false;
+        _invalid = false;
     }
 
     [[nodiscard]] uint64_t next() const noexcept { return _next; }
@@ -275,7 +329,12 @@ public:
 private:
     bool _initialized = false;
     uint64_t _next = 0;
+    uint64_t _last = 0;
     uint64_t _gaps = 0;
+    uint64_t _gap_size = 0;
+    SequenceGapClass _gap_class = SequenceGapClass::kNone;
+    bool _gap_pending = false;
+    bool _invalid = false;
 };
 
 class CircuitBreaker {
@@ -308,6 +367,9 @@ public:
     }
     [[nodiscard]] uint32_t failures() const noexcept {
         return _failures.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool tripped() const noexcept {
+        return _tripped.load(std::memory_order_acquire);
     }
 
 private:

@@ -26,3 +26,16 @@ jobs:
         run: cmake --build build-asan --parallel
       - name: Test
         run: ctest --test-dir build-asan --output-on-failure
+
+  dpdk-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install DPDK development package
+        run: sudo apt-get update && sudo apt-get install --yes libdpdk-dev pkg-config
+      - name: Configure
+        run: cmake -S . -B build-dpdk -DCMAKE_BUILD_TYPE=Release -DLUV_ENABLE_DPDK=ON -DLUV_ENABLE_LONG_STRESS_TESTS=ON -DLUV_STRESS_MESSAGES=250000
+      - name: Build
+        run: cmake --build build-dpdk --parallel
+      - name: Test
+        run: ctest --test-dir build-dpdk --output-on-failure -R 'feed|lob|execution|sequence_tracker|stress|crash_recovery'

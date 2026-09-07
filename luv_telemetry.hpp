@@ -375,6 +375,46 @@ private:
     TelemSnapshot _snapshot{};
 };
 
+struct HealthCheckResult {
+    bool feed_fresh = false;
+    bool lob_consistent = false;
+    bool execution_backlog = false;
+    bool memory_ok = false;
+    bool disk_space_ok = false;
+    bool cpu_usage_ok = false;
+};
+
+inline HealthCheckResult run_health_checks(
+    const TelemSnapshot& snapshot,
+    uint64_t last_feed_msg_ns,
+    uint64_t active_orders,
+    uint64_t rss_bytes,
+    uint64_t available_disk_bytes,
+    double cpu_usage_pct,
+    uint32_t backlog_limit,
+    uint64_t memory_limit_bytes,
+    uint64_t disk_limit_bytes,
+    double cpu_limit_pct) noexcept
+{
+    const uint64_t now_ns = []() noexcept {
+        struct timespec ts{};
+        ::clock_gettime(CLOCK_MONOTONIC, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
+               static_cast<uint64_t>(ts.tv_nsec);
+    }();
+
+    const uint64_t feed_age_ns = now_ns > last_feed_msg_ns ? now_ns - last_feed_msg_ns : 0;
+    const bool feed_fresh = feed_age_ns < 100'000'000ULL;
+    const bool lob_consistent = snapshot.halted == 0 && snapshot.active_orders >= 0;
+    const bool execution_backlog = active_orders <= backlog_limit;
+    const bool memory_ok = rss_bytes <= memory_limit_bytes;
+    const bool disk_space_ok = available_disk_bytes >= disk_limit_bytes;
+    const bool cpu_usage_ok = cpu_usage_pct <= cpu_limit_pct;
+
+    return {feed_fresh, lob_consistent, execution_backlog,
+            memory_ok, disk_space_ok, cpu_usage_ok};
+}
+
 class TelemetryBridge {
 public:
     TelemetryBridge() = default;

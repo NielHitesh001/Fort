@@ -21,13 +21,20 @@ option(LUV_ENABLE_DPDK
     "Build the Linux DPDK packet I/O backend" OFF)
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+if(LUV_ENABLE_DPDK)
+    if(APPLE)
+        message(FATAL_ERROR "LUV_ENABLE_DPDK requires a Linux host; the stub packet I/O backend is used on macOS.")
+    endif()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(DPDK REQUIRED IMPORTED_TARGET libdpdk)
+endif()
 
 add_library(packet_io STATIC)
 if(APPLE OR NOT LUV_ENABLE_DPDK)
     target_sources(packet_io PRIVATE packet_io_stub.c)
 else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(DPDK REQUIRED IMPORTED_TARGET libdpdk)
     target_sources(packet_io PRIVATE packet_io_dpdk.c)
     target_link_libraries(packet_io PRIVATE PkgConfig::DPDK)
 endif()
@@ -35,7 +42,7 @@ target_include_directories(packet_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(luv_core INTERFACE)
 target_include_directories(luv_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(luv_core INTERFACE packet_io)
+target_link_libraries(luv_core INTERFACE packet_io OpenSSL::Crypto)
 target_compile_options(luv_core INTERFACE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-O3;-Wall;-Wextra;-Wpedantic>)
 if(LUV_ENABLE_ASAN_UBSAN)
@@ -92,6 +99,7 @@ set(LUV_TESTS
     lob
     moldudp64_fixture
     ouch_parser
+    packet_io
     prometheus_export
     risk_validator
     sequence_tracker

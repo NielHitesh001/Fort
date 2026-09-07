@@ -197,6 +197,45 @@ void test_production_controls() {
     std::printf("  [OK] sequence gaps, circuit breaker, and rate limit\n");
 }
 
+void test_gateway_fail_closed_controls() {
+    std::printf("\n== Gateway fail-closed controls ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+
+    luv::ExecutionGateway gateway(1);
+    assert(gateway.init(arena));
+
+    luv::exec::RiskLimits limits {};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 10'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    gateway.risk().set_limits(3, limits);
+
+    auto intent = make_intent(now_ns());
+    luv::OutboundPacket packet {};
+    auto decision = gateway.try_build(intent, packet);
+    assert(decision.pass == 1);
+    assert(packet.len == luv::exec::ouch::kEnterOrderLen);
+
+    auto second = intent;
+    second.client_order_id = 0x12345678u;
+    luv::OutboundPacket second_packet {};
+    decision = gateway.try_build(second, second_packet);
+    assert(decision.pass == 0);
+    assert((decision.reject_mask & luv::exec::kRejectHalted) != 0);
+
+    gateway.circuit_breaker().trip();
+    auto after_trip = intent;
+    after_trip.client_order_id = 0x9ABCDEF0u;
+    luv::OutboundPacket trip_packet {};
+    decision = gateway.try_build(after_trip, trip_packet);
+    assert(decision.pass == 0);
+    assert((decision.reject_mask & luv::exec::kRejectHalted) != 0);
+
+    std::printf("  [OK] gateway fails closed when rate-limited or tripped\n");
+}
+
 void test_audit_admission() {
     std::printf("\n== Durable audit admission ==\n");
 

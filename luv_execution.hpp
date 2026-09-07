@@ -270,6 +270,9 @@ private:
 
 class ExecutionGateway {
 public:
+    explicit ExecutionGateway(uint32_t rate_limit = 10'000) noexcept
+        : _rate_limiter(rate_limit) {}
+
     [[nodiscard]] bool init(Arena& arena) noexcept {
         if (!arena.is_initialised()) return false;
         _arena = &arena;
@@ -281,6 +284,10 @@ public:
 
     PreTradeRisk& risk() noexcept { return _risk; }
     const PreTradeRisk& risk() const noexcept { return _risk; }
+    [[nodiscard]] CircuitBreaker& circuit_breaker() noexcept { return _breaker; }
+    [[nodiscard]] const CircuitBreaker& circuit_breaker() const noexcept {
+        return _breaker;
+    }
 
     [[nodiscard]] exec::RiskDecision try_build(
         const exec::OrderIntent& intent,
@@ -290,6 +297,17 @@ public:
         if (!_arena || intent.symbol_idx >= Config::kSymbols) [[unlikely]] {
             return {0, exec::kRejectInvalidSymbol};
         }
+        if (!_breaker.allow()) {
+            ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
+            _arena->exec_states[intent.symbol_idx].risk.halted = 1;
+            return {0, exec::kRejectHalted};
+        }
+        if (!_rate_limiter.try_acquire()) {
+            ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
+            _arena->exec_states[intent.symbol_idx].risk.halted = 1;
+            return {0, exec::kRejectHalted};
+        }
+
         exec::RiskDecision decision = _risk.evaluate(intent);
         const RiskState& risk = _arena->exec_states[intent.symbol_idx].risk;
         const uint8_t risk_pass = decision.pass;
@@ -299,11 +317,13 @@ public:
         decision.reject_mask |= static_cast<uint8_t>(
             (capacity_ok ^ 1u) * exec::kRejectOrderCapacity);
         if (!risk_pass) {
+            _rate_limiter.release();
             packet.len = 0;
             ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
             return decision;
         }
         if (!capacity_ok) {
+            _rate_limiter.release();
             _arena->exec_states[intent.symbol_idx].risk.halted = 1;
             packet.len = 0;
             return decision;
@@ -316,6 +336,7 @@ public:
             (built_bit ^ 1u) * exec::kRejectFlatSignal);
 
         if (!decision.pass) {
+            _rate_limiter.release();
             packet.len = 0;
             ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
             return decision;
@@ -327,6 +348,7 @@ public:
 
         if (decision.pass) [[likely]] {
             if (!reserve_order_slot(intent)) {
+                _rate_limiter.release();
                 decision.pass = 0;
                 decision.reject_mask |= exec::kRejectPosition;
                 packet.len = 0;
@@ -337,6 +359,7 @@ public:
                                            intent.price, intent.qty,
                                            0, intent.side, 'A')) {
                 release_order_slot(intent);
+                _rate_limiter.release();
                 decision.pass = 0;
                 decision.reject_mask |= exec::kRejectHalted;
                 packet.len = 0;
@@ -352,6 +375,7 @@ public:
                     static_cast<uint8_t>(intent.side),
                     intent.now_ns})) {
                 release_order_slot(intent);
+                _rate_limiter.release();
                 decision.pass = 0;
                 decision.reject_mask |= exec::kRejectHalted;
                 packet.len = 0;
@@ -362,6 +386,7 @@ public:
                 !_reconciliation.register_order(intent.client_order_id,
                                                 intent.qty)) {
                 release_order_slot(intent);
+                _rate_limiter.release();
                 decision.pass = 0;
                 decision.reject_mask |= exec::kRejectPosition;
                 packet.len = 0;
@@ -369,14 +394,11 @@ public:
                 _breaker.record_failure();
             }
         } else {
+            _rate_limiter.release();
             ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
         }
 
         return decision;
-    }
-
-    [[nodiscard]] const CircuitBreaker& circuit_breaker() const noexcept {
-        return _breaker;
     }
 
     void set_audit_log(DurableAuditLog* audit_log) noexcept {
@@ -523,6 +545,7 @@ private:
     OuchPacketTemplates _ouch;
     CircuitBreaker _breaker{1};
     ReconciliationLedger<> _reconciliation{};
+    OrderRateLimiter _rate_limiter;
     DurableAuditLog* _audit_log = nullptr;
     RecoveryLedger* _recovery_ledger = nullptr;
 };

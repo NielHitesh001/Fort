@@ -14,6 +14,7 @@
 #include <rte_mempool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define MEMPOOL_CACHE_SZ 256
 #define RX_RING_SZ 1024
@@ -22,6 +23,46 @@
 
 static uint16_t g_port_id = 0;
 static struct rte_mempool* g_mbuf_pool = NULL;
+static int g_emulated_mode = 0;
+static uint32_t g_emulated_seq = 1U;
+static struct rte_mbuf* g_emulated_pkts[16];
+
+static int ensure_eal_ready(void) {
+    static int eal_ready = 0;
+    if (eal_ready) return 0;
+    char* argv[] = {
+        "packet_io",
+        "--in-memory",
+        "--no-huge",
+        "--iova-mode=va",
+    };
+    int ret = rte_eal_init(4, argv);
+    if (ret < 0) {
+        fprintf(stderr, "packet_io_init_dpdk: rte_eal_init failed: %d\n", ret);
+        return -1;
+    }
+    eal_ready = 1;
+    return 0;
+}
+
+static void* make_emulated_packet(void) {
+    struct rte_mbuf* mb = rte_pktmbuf_alloc(g_mbuf_pool);
+    if (!mb) {
+        mb = calloc(1U, sizeof(*mb));
+        if (!mb) return NULL;
+    }
+    mb->buf_len = 64;
+    mb->data_len = 64;
+    mb->pkt_len = 64;
+    memset(mb->buf_addr, 0, mb->buf_len);
+    ((uint8_t*)mb->buf_addr)[0] = 'A';
+    ((uint8_t*)mb->buf_addr)[1] = (uint8_t)((g_emulated_seq >> 24) & 0xFFU);
+    ((uint8_t*)mb->buf_addr)[2] = (uint8_t)((g_emulated_seq >> 16) & 0xFFU);
+    ((uint8_t*)mb->buf_addr)[3] = (uint8_t)((g_emulated_seq >> 8) & 0xFFU);
+    ((uint8_t*)mb->buf_addr)[4] = (uint8_t)(g_emulated_seq & 0xFFU);
+    ++g_emulated_seq;
+    return mb;
+}
 
 /**
  * packet_io_init_dpdk
@@ -31,7 +72,21 @@ static struct rte_mempool* g_mbuf_pool = NULL;
  */
 static int packet_io_init_dpdk(uint16_t num_rx_queues, uint16_t num_tx_queues) {
     int ret;
-    
+
+    if (ensure_eal_ready() != 0) return -1;
+    if (rte_eth_dev_count_avail() == 0) {
+        g_emulated_mode = 1;
+        g_mbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", NUM_MBUFS,
+                                              MEMPOOL_CACHE_SZ, 0,
+                                              RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
+        if (!g_mbuf_pool) {
+            fprintf(stderr, "packet_io_init_dpdk: no device found; emulation pool unavailable\n");
+            return 0;
+        }
+        fprintf(stderr, "packet_io_init_dpdk: no DPDK devices detected; using emulated packets\n");
+        return 0;
+    }
+
     /* Configure port */
     struct rte_eth_conf port_conf = {
         .rxmode = { .mq_mode = RTE_ETH_MQ_RX_RSS },
@@ -110,6 +165,19 @@ static void packet_io_fini_dpdk(void) {
  */
 static uint16_t packet_io_rx_burst_dpdk(uint8_t port_id, uint16_t queue_id,
                                          void **packets, uint16_t nb_pkts) {
+    (void)port_id;
+    (void)queue_id;
+    if (g_emulated_mode && packets && nb_pkts > 0) {
+        uint16_t count = 0;
+        for (uint16_t i = 0; i < nb_pkts; ++i) {
+            void* packet = make_emulated_packet();
+            if (!packet) break;
+            packets[i] = packet;
+            ++count;
+        }
+        return count;
+    }
+    if (!g_mbuf_pool) return 0;
     return rte_eth_rx_burst(port_id, queue_id, (struct rte_mbuf**)packets, nb_pkts);
 }
 
@@ -130,6 +198,9 @@ static uint16_t packet_io_tx_burst_dpdk(uint8_t port_id, uint16_t queue_id,
  * Stub returns NULL.
  */
 static void* packet_io_get_next_packet_dpdk(void) {
+    if (g_emulated_mode) {
+        return make_emulated_packet();
+    }
     return NULL;
 }
 
