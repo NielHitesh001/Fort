@@ -13,7 +13,8 @@ int main() {
     {
         luv::RecoveryLedger ledger;
         assert(ledger.open(path));
-        assert(ledger.append(luv::RecoveryEventType::kAdd, 10, 100, 1'000'000));
+        assert(ledger.append_with_side(luv::RecoveryEventType::kAdd, 10, 100,
+                           1'000'000, 1, 111));
         assert(ledger.append(luv::RecoveryEventType::kFill, 10, 40));
         assert(ledger.append(luv::RecoveryEventType::kAdd, 11, 50, 1'010'000));
         assert(ledger.append(luv::RecoveryEventType::kCancel, 11, 50));
@@ -30,6 +31,8 @@ int main() {
         assert(orders[0].order_id == 10);
         assert(orders[0].remaining == 60);
         assert(orders[0].price == 1'000'000);
+        assert(orders[0].side == 1);
+        assert(orders[0].timestamp_ns == 111);
     }
 
     int fd = ::open(path, O_WRONLY | O_APPEND);

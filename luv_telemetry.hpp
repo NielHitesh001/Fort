@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <chrono>
 #include <arpa/inet.h>
@@ -212,6 +214,165 @@ private:
     std::array<uint64_t, MaxLatencies> _latencies{};
     uint32_t _latency_count = 0;
     uint32_t _dropped_latencies = 0;
+};
+
+class PrometheusMetricsExporter {
+public:
+    static std::string render(const TelemSnapshot& snap) noexcept {
+        char buf[1024];
+        const int n = std::snprintf(
+            buf,
+            sizeof(buf),
+            "# HELP luv_session_pnl Session PnL\n"
+            "# TYPE luv_session_pnl gauge\n"
+            "luv_session_pnl %lld\n"
+            "# HELP luv_gross_exposure Gross exposure\n"
+            "# TYPE luv_gross_exposure gauge\n"
+            "luv_gross_exposure %lld\n"
+            "# HELP luv_fill_count Total fills observed\n"
+            "# TYPE luv_fill_count counter\n"
+            "luv_fill_count %d\n"
+            "# HELP luv_reject_count Total rejected orders\n"
+            "# TYPE luv_reject_count counter\n"
+            "luv_reject_count %d\n"
+            "# HELP luv_tick_rate_hz Tick rate in hertz\n"
+            "# TYPE luv_tick_rate_hz gauge\n"
+            "luv_tick_rate_hz %u\n"
+            "# HELP luv_active_orders Active order count\n"
+            "# TYPE luv_active_orders gauge\n"
+            "luv_active_orders %u\n"
+            "# HELP luv_inference_us Inference latency in microseconds\n"
+            "# TYPE luv_inference_us gauge\n"
+            "luv_inference_us %.3f\n"
+            "# HELP luv_risk_ns Risk check latency in nanoseconds\n"
+            "# TYPE luv_risk_ns gauge\n"
+            "luv_risk_ns %.3f\n",
+            static_cast<long long>(snap.session_pnl),
+            static_cast<long long>(snap.gross_exposure),
+            snap.fill_count,
+            snap.reject_count,
+            snap.tick_rate_hz,
+            snap.active_orders,
+            static_cast<double>(snap.inference_us),
+            static_cast<double>(snap.risk_ns));
+        if (n <= 0 || static_cast<size_t>(n) >= sizeof(buf)) return {};
+        return std::string(buf, static_cast<size_t>(n));
+    }
+};
+
+class MetricsHttpServer {
+public:
+    explicit MetricsHttpServer(uint16_t port = 9090) noexcept
+        : _requested_port(port) {}
+
+    MetricsHttpServer(const MetricsHttpServer&) = delete;
+    MetricsHttpServer& operator=(const MetricsHttpServer&) = delete;
+
+    ~MetricsHttpServer() { stop(); }
+
+    [[nodiscard]] bool start(const TelemSnapshot& initial) {
+        {
+            std::lock_guard<std::mutex> lock(_snapshot_mutex);
+            _snapshot = initial;
+        }
+
+        _fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (_fd < 0) return false;
+
+        int reuse = 1;
+        ::setsockopt(_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(_requested_port);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::bind(_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0 ||
+            ::listen(_fd, 8) < 0) {
+            close_socket();
+            return false;
+        }
+
+        socklen_t length = sizeof(addr);
+        if (::getsockname(_fd, reinterpret_cast<sockaddr*>(&addr), &length) < 0) {
+            close_socket();
+            return false;
+        }
+        _bound_port = ntohs(addr.sin_port);
+        _running.store(true, std::memory_order_release);
+        _thread = std::thread(&MetricsHttpServer::serve, this);
+        return true;
+    }
+
+    void update(const TelemSnapshot& snapshot) noexcept {
+        std::lock_guard<std::mutex> lock(_snapshot_mutex);
+        _snapshot = snapshot;
+    }
+
+    void stop() noexcept {
+        if (!_running.exchange(false, std::memory_order_acq_rel)) return;
+        close_socket();
+        if (_thread.joinable()) _thread.join();
+    }
+
+    [[nodiscard]] uint16_t port() const noexcept { return _bound_port; }
+
+private:
+    void serve() noexcept {
+        while (_running.load(std::memory_order_acquire)) {
+            const int client = ::accept(_fd, nullptr, nullptr);
+            if (client < 0) continue;
+
+            char request[512]{};
+            const ssize_t received = ::recv(client, request, sizeof(request) - 1, 0);
+            const bool metrics_request = received > 0 &&
+                std::strncmp(request, "GET /metrics ", 13) == 0;
+
+            if (metrics_request) {
+                TelemSnapshot snapshot{};
+                {
+                    std::lock_guard<std::mutex> lock(_snapshot_mutex);
+                    snapshot = _snapshot;
+                }
+                const std::string body = PrometheusMetricsExporter::render(snapshot);
+                const std::string response =
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/plain; version=0.0.4\r\n"
+                    "Content-Length: " + std::to_string(body.size()) +
+                    "\r\n\r\n" + body;
+                send_all(client, response.data(), response.size());
+            } else {
+                constexpr const char response[] =
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                send_all(client, response, sizeof(response) - 1);
+            }
+            ::close(client);
+        }
+    }
+
+    static void send_all(int fd, const char* data, size_t bytes) noexcept {
+        while (bytes > 0) {
+            const ssize_t sent = ::send(fd, data, bytes, 0);
+            if (sent <= 0) return;
+            data += sent;
+            bytes -= static_cast<size_t>(sent);
+        }
+    }
+
+    void close_socket() noexcept {
+        if (_fd >= 0) {
+            ::shutdown(_fd, SHUT_RDWR);
+            ::close(_fd);
+            _fd = -1;
+        }
+    }
+
+    uint16_t _requested_port = 9090;
+    uint16_t _bound_port = 0;
+    int _fd = -1;
+    std::atomic<bool> _running{false};
+    std::thread _thread;
+    std::mutex _snapshot_mutex;
+    TelemSnapshot _snapshot{};
 };
 
 class TelemetryBridge {

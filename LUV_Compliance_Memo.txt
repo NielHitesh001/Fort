@@ -1,0 +1,49 @@
+LUV TERMINAL - COMPLIANCE MEMO FOR LEGAL REVIEW
+
+BUSINESS MODEL:
+- We provide real-time Nasdaq ITCH TotalView 5.0 feed decoding
+- We reconstruct the order book and execute customer strategies
+- We generate audit trails (SHA-256 chained, immutable)
+- We DO NOT hold customer money, execute on their behalf, or settle trades
+- Customers use our terminal to make their own trading decisions
+
+WHAT WE NEED:
+1. Opinion: Do we need MSB (Money Transmitter) license?
+   Our reading: No (FinCEN FIN-2019-G001 = data vendor exemption)
+
+2. Opinion: Do we need broker-dealer registration?
+   Our reading: No (we don't execute, customers do)
+
+3. Review: FINRA Rule 4512 (audit trail requirement)
+   Our implementation: SHA-256 hash chain, fsync to disk, 100% continuity
+   Question: Are we compliant?
+
+4. Contract language: What DPA/SEA clauses do we need for a 2-week pilot?
+   Liability cap? Data residency? Audit rights? Termination?
+
+TIMELINE & BUDGET:
+- We need this review in 5–7 days
+- We can pay $3K–$5K for an opinion letter
+
+
+LEGAL REVIEW REQUEST:
+Hi [Attorney],
+
+We're building a non-custodial data terminal for institutional traders.
+We decode live Nasdaq ITCH feeds, reconstruct order books, and generate
+audit trails—but we do NOT hold capital or execute trades.
+
+We need a legal opinion confirming:
+1. We don't need MSB licensing
+2. We don't need broker-dealer registration
+3. Our FINRA Rule 4512 audit trail is compliant
+4. Key DPA/SEA contract language for pilots
+
+Can you handle this? What's your timeline and cost for an opinion letter?
+
+We're looking to start a paid pilot within 2 weeks, so speed matters.
+
+Thanks,
+Niel Hitesh
+LUV Terminal
+[Your phone]

@@ -18,6 +18,8 @@ enum class RecoveryEventType : uint8_t {
     kNew = 5,
 };
 
+constexpr uint8_t kRecoveryRecordVersion = 2;
+
 struct RecoveryEvent {
     RecoveryEventType type = RecoveryEventType::kNew;
     uint64_t order_id = 0;
@@ -29,22 +31,27 @@ struct RecoveryEvent {
 
 struct RecoveryRecord {
     uint32_t magic = 0x31564352; // "RCV1"
-    uint8_t version = 1;
+    uint8_t version = kRecoveryRecordVersion;
     uint8_t type = 0;
     uint16_t reserved = 0;
     uint64_t sequence = 0;
     uint64_t order_id = 0;
     int64_t quantity = 0;
     int64_t price = 0;
+    uint8_t side = 0;
+    uint8_t reserved_bytes[7]{};
+    uint64_t timestamp_ns = 0;
     uint32_t checksum = 0;
     uint32_t padding = 0;
 };
-static_assert(sizeof(RecoveryRecord) == 48, "Recovery record layout changed");
+static_assert(sizeof(RecoveryRecord) == 64, "Recovery record layout changed");
 
 struct RecoveredOrder {
     uint64_t order_id = 0;
     int64_t remaining = 0;
     int64_t price = 0;
+    uint8_t side = 0;
+    uint64_t timestamp_ns = 0;
 };
 
 class RecoveryLedger {
@@ -85,13 +92,13 @@ public:
         record.order_id = order_id;
         record.quantity = quantity;
         record.price = price;
+        record.side = side;
+        record.timestamp_ns = timestamp_ns;
         record.checksum = checksum(record);
         if (!write_all(&record, sizeof(record))) return false;
         if (::fsync(_fd) != 0) return false;
         ++_sequence;
 
-        (void)side;
-        (void)timestamp_ns;
         return true;
     }
 
@@ -118,7 +125,8 @@ public:
             if (bytes == 0) break;
             if (bytes < 0 && errno == EINTR) continue;
             if (bytes != static_cast<ssize_t>(sizeof(record)) ||
-                record.magic != 0x31564352 || record.version != 1 ||
+                record.magic != 0x31564352 ||
+                record.version != kRecoveryRecordVersion ||
                 record.sequence != expected_sequence ||
                 checksum(record) != record.checksum)
                 return false;
@@ -158,7 +166,8 @@ private:
         if (record.type == static_cast<uint8_t>(RecoveryEventType::kAdd) ||
             record.type == static_cast<uint8_t>(RecoveryEventType::kNew)) {
             if (index != count || count == capacity) return false;
-            output[count++] = {record.order_id, record.quantity, record.price};
+            output[count++] = {record.order_id, record.quantity, record.price,
+                               record.side, record.timestamp_ns};
             return true;
         }
         if (index == count) return false;

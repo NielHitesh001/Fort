@@ -43,6 +43,9 @@ set(LUV_TESTS
     test_ouch_parser
     test_risk_validator
     test_telemetry_export
+    test_prometheus_export
+    test_shutdown_controller
+    test_strategy
     test_crash_recovery
     test_crash_recovery_process
     test_audit_integrity
@@ -74,6 +77,11 @@ target_compile_options(staging_soak_runner PRIVATE
 add_executable(crash_recovery_harness crash_recovery_harness.cpp)
 target_link_libraries(crash_recovery_harness PRIVATE luv_core Threads::Threads)
 target_compile_options(crash_recovery_harness PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+
+add_executable(main_engine main_engine.cpp)
+target_link_libraries(main_engine PRIVATE luv_core Threads::Threads)
+target_compile_options(main_engine PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
 
 enable_testing()

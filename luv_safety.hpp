@@ -175,6 +175,10 @@ public:
     ShutdownController(const ShutdownController&) = delete;
     ShutdownController& operator=(const ShutdownController&) = delete;
 
+    static void request_shutdown() noexcept {
+        _requested.store(true, std::memory_order_release);
+    }
+
     [[nodiscard]] bool requested() const noexcept {
         return _requested.load(std::memory_order_acquire);
     }
@@ -183,7 +187,7 @@ public:
 
 private:
     static void handle_signal(int) noexcept {
-        _requested.store(true, std::memory_order_release);
+        request_shutdown();
     }
 
     void install() noexcept {
