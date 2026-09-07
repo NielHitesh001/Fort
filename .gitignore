@@ -1,4 +1,11 @@
 /build/
+/build-*/
+/cmake-build-*/
+/node_modules/
+*.o
+*.a
+*.so
+*.dylib
 /build-asan/
 /build-tsan/
 /build-recovery/

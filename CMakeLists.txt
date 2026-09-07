@@ -37,11 +37,13 @@ set(LUV_TESTS
     test_execution
     test_feed
     test_lob
+    test_moldudp64_fixture
     test_stress
     test_decoder_fuzz
     test_concurrency
     test_ouch_parser
     test_risk_validator
+    test_sequence_tracker
     test_telemetry_export
     test_prometheus_export
     test_shutdown_controller

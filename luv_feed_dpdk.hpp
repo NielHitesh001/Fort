@@ -19,6 +19,7 @@
 
 #include "luv_feed.hpp"
 #include "luv_decode_itch.hpp"
+#include "luv_moldudp64.hpp"
 #include "luv_safety.hpp"
 
 #include <cstdint>
@@ -229,8 +230,16 @@ private:
 
         _total_bytes += pkt_len;
 
-        // MoldUDP64 header: session[10], sequence[8], message_count[2].
-        const uint64_t sequence = detail::be64(payload + 10);
+        moldudp64::Header header{};
+        if (!moldudp64::parse_header(payload, payload_len, header)) {
+            return 0;
+        }
+        if (!moldudp64::validate_message_block(payload, payload_len,
+                                               header.message_count)) {
+            return 0;
+        }
+
+        const uint64_t sequence = header.sequence;
         const SequenceResult result = _sequence.observe(sequence);
         if (result == SequenceResult::kGap ||
             result == SequenceResult::kOutOfOrder ||
@@ -239,24 +248,12 @@ private:
             return 0;
         }
 
-        // Iterate over the MoldUDP64 message block.
-        uint32_t offset = 20;
+        moldudp64::MessageIterator messages(payload, payload_len);
         uint32_t decoded = 0;
+        const uint8_t* raw_msg = nullptr;
+        uint16_t msg_len = 0;
 
-        while (offset + 2 <= payload_len) {
-            // Read 2-byte big-endian message length
-            const uint16_t msg_len = static_cast<uint16_t>(
-                (static_cast<uint16_t>(payload[offset]) << 8) |
-                 payload[offset + 1]);
-
-            offset += 2;
-
-            if (msg_len == 0 || offset + msg_len > payload_len) {
-                break;  // malformed or truncated
-            }
-
-            const uint8_t* raw_msg = payload + offset;
-
+        while (messages.next(raw_msg, msg_len)) {
             // Claim a slot in the tick ring
             TickMsg* slot = _arena->tick_ring.try_claim();
             if (!slot) [[unlikely]] {
@@ -272,8 +269,6 @@ private:
             }
             // If decode fails (e.g. message type we don't handle),
             // we simply don't commit the slot — it's a no-op.
-
-            offset += msg_len;
         }
 
         return decoded;

@@ -1,0 +1,109 @@
+{
+  "evidence_set_id": "CP-003-2026-09-07-local-release",
+  "repository": "NielHitesh001/Arbor",
+  "engine": "Arbor / LUV Flicker",
+  "recorded_at": "2026-09-07T06:55:20Z",
+  "commit": "f55be11762f19d6a471bd5a013e31b70df638c6b",
+  "working_tree": "dirty",
+  "environment": {
+    "os": "Darwin 25.6.0 arm64",
+    "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "build_type": "Release",
+    "cmake_options": [
+      "-DLUV_ENABLE_LONG_STRESS_TESTS=OFF"
+    ]
+  },
+  "execution": {
+    "command": "cmake -S . -B /tmp/arbor-cp003-build -DCMAKE_BUILD_TYPE=Release -DLUV_ENABLE_LONG_STRESS_TESTS=OFF && cmake --build /tmp/arbor-cp003-build -j2 && ctest --test-dir /tmp/arbor-cp003-build --output-on-failure",
+    "artifact": "/tmp/arbor-cp003-strict-protocol.log",
+    "artifact_sha256": "2e200fb1a6b5802008ab6997e89810791806938fc5dc3e971e21ccf8a56eaaa9",
+    "enabled_tests_passed": 20,
+    "enabled_tests_failed": 0,
+    "disabled_tests": [
+      "test_stress"
+    ]
+  },
+  "records": [
+    {
+      "evidence_id": "EVD-LOB-001",
+      "requirement_id": "REQ-LOB-001",
+      "invariant": "Invalid order locations never dereference LOB state.",
+      "test": "test_lob",
+      "inputs": "CTest default fixture",
+      "result": "VERIFIED-LOCAL",
+      "limitations": "Does not prove exchange feed correctness or complete application-level concurrency safety."
+    },
+    {
+      "evidence_id": "EVD-FEED-001",
+      "requirement_id": "REQ-FEED-001",
+      "invariant": "Malformed ITCH lengths and semantic fields are rejected without a test-process failure.",
+      "test": "test_feed; test_decoder_fuzz",
+      "inputs": "CTest fixtures and repository fuzz smoke inputs",
+      "result": "VERIFIED-LOCAL",
+      "limitations": "Does not replace protocol-complete fuzzing or real MoldUDP64 capture replay."
+    },
+    {
+      "evidence_id": "EVD-FEED-002",
+      "requirement_id": "REQ-FEED-002",
+      "invariant": "Sequence gaps, duplicates, and out-of-order values are classified deterministically.",
+      "test": "test_sequence_tracker",
+      "inputs": "Synthetic sequence values 100, 101, 104, 104, 102, followed by reset",
+      "result": "VERIFIED-LOCAL",
+      "limitations": "Does not prove MoldUDP64 packet capture, replay, recovery, or venue transport behavior."
+    },
+    {
+      "evidence_id": "EVD-CONC-001",
+      "requirement_id": "REQ-CONC-001",
+      "invariant": "LOB mutation and shared reads obey the documented ownership boundary.",
+      "test": "test_concurrency",
+      "inputs": "CTest concurrent-reader/writer fixture",
+      "result": "VERIFIED-LOCAL",
+      "limitations": "A bounded smoke run does not prove race freedom across every application boundary."
+    },
+    {
+      "evidence_id": "EVD-FEED-003",
+      "requirement_id": "REQ-FEED-003",
+      "invariant": "MoldUDP64 headers and declared length-prefixed message counts reject truncated, mismatched, or trailing input deterministically.",
+      "test": "test_moldudp64_fixture",
+      "inputs": "Synthetic 20-byte header with two valid messages and one truncated message block",
+      "result": "VERIFIED-LOCAL",
+      "limitations": "Does not prove NIC framing, packet loss recovery, exchange behavior, or venue certification."
+    },
+    {
+      "evidence_id": "EVD-RISK-001",
+      "requirement_id": "REQ-RISK-001",
+      "invariant": "Admission rejects invalid orders and enforces bounded active capacity.",
+      "test": "test_execution; test_risk_validator",
+      "inputs": "CTest validation fixtures",
+      "result": "VERIFIED-LOCAL",
+      "limitations": "Does not establish venue-specific risk controls, credentials, or operator authorization."
+    },
+    {
+      "evidence_id": "EVD-AUDIT-001",
+      "requirement_id": "REQ-AUDIT-001",
+      "invariant": "Corrupt or truncated recovery records are rejected deterministically.",
+      "test": "test_audit_integrity; test_crash_recovery; test_crash_recovery_process; crash_recovery_harness",
+      "inputs": "CTest local recovery and audit fixtures",
+      "result": "VERIFIED-LOCAL",
+      "limitations": "Does not prove external immutable retention, backup, or disaster recovery."
+    },
+    {
+      "evidence_id": "EVD-PERF-001",
+      "requirement_id": "REQ-PERF-001",
+      "invariant": "The simulated execution path reports reproducible percentile latency.",
+      "test": "test_latency",
+      "inputs": "20,000 local LOB add samples",
+      "result": "VERIFIED-LOCAL",
+      "metrics": {
+        "p50_ns": 1625,
+        "p99_ns": 10417,
+        "p999_ns": 38792,
+        "samples": 20000
+      },
+      "artifact": "/tmp/arbor-cp003-latency.log",
+      "artifact_sha256": "cb1b766988ed0c7a67db49535a96017321eba329c56c91bcc1be4269e5d1c407",
+      "limitations": "Target-hardware latency, jitter, cache behavior, and production SLA remain open."
+    }
+  ],
+  "scope_statement": "This evidence set supports controlled local software validation only. It does not authorize production deployment or real-money trading."
+}

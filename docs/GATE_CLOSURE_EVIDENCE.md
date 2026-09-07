@@ -1,7 +1,8 @@
 # Gate A Closure Evidence
 
 Date: 2026-09-07
-Repository: `NielHitesh001/LUV---Flicker-`
+Repository: `NielHitesh001/Arbor`
+Engine: `Arbor / LUV Flicker`
 Scope: Local engineering validation only
 
 ## Executive Status

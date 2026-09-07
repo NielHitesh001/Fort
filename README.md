@@ -1,10 +1,19 @@
-# LUV Flicker
+# Arbor / LUV Flicker
 
-LUV Flicker is a research-grade C++20 library for reconstructing a Nasdaq
+Arbor is the repository and project identity; LUV Flicker is the current C++
+engine name. It is a research-grade C++20 library for reconstructing a Nasdaq
 ITCH-style limit order book from preallocated memory. It is not production
 trading software and must not be connected to real capital without an
 independent review, exchange certification, reconciliation, and operational
 controls.
+
+## Evidence Boundary
+
+Validation claims are tracked under the CP-003 evidence contract in
+`docs/CP-003_EVIDENCE_PLAN.md`. Local test passes establish only the stated
+software invariant under the recorded environment; they do not establish
+exchange certification, target-hardware performance, operational readiness, or
+permission to trade real capital.
 
 ## Scope
 

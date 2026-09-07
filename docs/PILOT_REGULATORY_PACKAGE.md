@@ -1,7 +1,8 @@
 # LUV---Flicker- Pilot Regulatory Package
 
 Date: 2026-09-07
-Repository: `NielHitesh001/LUV---Flicker-`
+Repository: `NielHitesh001/Arbor`
+Engine: `Arbor / LUV Flicker`
 
 ## Executive Summary
 

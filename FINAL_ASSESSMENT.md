@@ -1,7 +1,8 @@
 # Final Engineering Assessment
 
 Date: 2026-09-04
-Repository: `NielHitesh001/LUV---Flicker-`
+Repository: `NielHitesh001/Arbor`
+Engine: `Arbor / LUV Flicker`
 
 ## Verdict
 

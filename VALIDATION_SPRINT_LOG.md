@@ -1,6 +1,7 @@
 # Validation Sprint Log
 
-Repository: `LUV---Flicker-`
+Repository: `NielHitesh001/Arbor`
+Engine: `Arbor / LUV Flicker`
 Date: 2026-09-05
 
 ## Verified Local Gates
