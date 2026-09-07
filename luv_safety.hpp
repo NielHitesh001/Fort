@@ -417,6 +417,10 @@ public:
         return true;
     }
 
+    [[nodiscard]] bool contains(uint64_t order_id) noexcept {
+        return order_id != 0 && find(order_id) != nullptr;
+    }
+
     [[nodiscard]] bool cancel(uint64_t order_id) noexcept {
         Entry* entry = find(order_id);
         if (!entry) return false;

@@ -306,6 +306,41 @@ void test_audit_admission() {
     std::printf("  [OK] accepted order durably recorded\n");
 }
 
+void test_recovery_failure_preserves_live_order() {
+    std::printf("\n== Recovery failure preserves live order ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+    luv::ExecutionGateway gateway;
+    assert(gateway.init(arena));
+
+    luv::RecoveryLedger ledger;
+    const char* path = "/tmp/luv-execution-recovery-failure-test.bin";
+    ::unlink(path);
+    assert(ledger.open(path));
+    gateway.set_recovery_ledger(&ledger);
+
+    luv::exec::RiskLimits limits{};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 10'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    gateway.risk().set_limits(3, limits);
+
+    const auto intent = make_intent(now_ns());
+    luv::OutboundPacket packet{};
+    assert(gateway.try_build(intent, packet).pass == 1);
+    ledger.close();
+
+    assert(!gateway.apply_execution_report(
+        3, luv::ExecutionReport{intent.client_order_id, 40, false}));
+    assert(arena.exec_states[3].orders[0].filled_qty == 0);
+    assert(arena.exec_states[3].orders[0].qty == intent.qty);
+    assert(arena.exec_states[3].orders[0].state == 1);
+
+    ::unlink(path);
+    std::printf("  [OK] failed fill persistence leaves live order unchanged\n");
+}
+
 void benchmark_risk_core() {
     std::printf("\n== Risk timing sample ==\n");
 
@@ -350,6 +385,7 @@ int main() {
     test_duplicate_order_id_fails_closed();
     test_gateway_fail_closed_controls();
     test_audit_admission();
+    test_recovery_failure_preserves_live_order();
     benchmark_risk_core();
 
     std::printf("\nAll execution tests passed.\n");

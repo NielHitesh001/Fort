@@ -411,8 +411,7 @@ public:
 
     [[nodiscard]] bool apply_execution_report(
         uint16_t symbol, const ExecutionReport& report) noexcept {
-        if (!_arena || symbol >= Config::kSymbols ||
-            !_reconciliation.apply(report)) {
+        if (!_arena || symbol >= Config::kSymbols) {
             if (_arena && symbol < Config::kSymbols) {
                 _arena->exec_states[symbol].risk.halted = 1;
             }
@@ -426,6 +425,14 @@ public:
             if (order.order_id != report.order_id || order.state == 0)
                 continue;
 
+            if (report.filled_quantity <= 0 ||
+                report.filled_quantity > order.qty ||
+                !_reconciliation.contains(report.order_id)) {
+                state.risk.halted = 1;
+                _breaker.trip();
+                return false;
+            }
+
             if (_recovery_ledger &&
                 !_recovery_ledger->append_and_flush(RecoveryEvent{
                     RecoveryEventType::kFill,
@@ -434,6 +441,12 @@ public:
                     order.price,
                     static_cast<uint8_t>(order.side),
                     now_ns()})) {
+                state.risk.halted = 1;
+                _breaker.trip();
+                return false;
+            }
+
+            if (!_reconciliation.apply(report)) {
                 state.risk.halted = 1;
                 _breaker.trip();
                 return false;
@@ -457,8 +470,7 @@ public:
 
     [[nodiscard]] bool apply_cancel_report(
         uint16_t symbol, uint64_t order_id) noexcept {
-        if (!_arena || symbol >= Config::kSymbols ||
-            !_reconciliation.cancel(order_id)) {
+        if (!_arena || symbol >= Config::kSymbols) {
             if (_arena && symbol < Config::kSymbols)
                 _arena->exec_states[symbol].risk.halted = 1;
             _breaker.trip();
@@ -468,6 +480,12 @@ public:
         for (ActiveOrder& order : state.orders) {
             if (order.order_id != order_id || order.state == 0) continue;
 
+            if (!_reconciliation.contains(order_id)) {
+                state.risk.halted = 1;
+                _breaker.trip();
+                return false;
+            }
+
             if (_recovery_ledger &&
                 !_recovery_ledger->append_and_flush(RecoveryEvent{
                     RecoveryEventType::kCancel,
@@ -476,6 +494,12 @@ public:
                     order.price,
                     static_cast<uint8_t>(order.side),
                     now_ns()})) {
+                state.risk.halted = 1;
+                _breaker.trip();
+                return false;
+            }
+
+            if (!_reconciliation.cancel(order_id)) {
                 state.risk.halted = 1;
                 _breaker.trip();
                 return false;
