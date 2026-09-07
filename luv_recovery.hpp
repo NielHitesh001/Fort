@@ -17,6 +17,7 @@ enum class RecoveryEventType : uint8_t {
     kCancel = 3,
     kAck = 4,
     kNew = 5,
+    kReplace = 6,
 };
 
 constexpr uint8_t kRecoveryRecordVersion = 2;
@@ -188,6 +189,12 @@ private:
             if (record.quantity > output[index].remaining) return false;
             output[index].remaining -= record.quantity;
             if (output[index].remaining == 0) remove(output, count, index);
+            return true;
+        }
+        if (record.type == static_cast<uint8_t>(RecoveryEventType::kReplace)) {
+            if (record.quantity <= 0) return false;
+            output[index].remaining = record.quantity;
+            if (record.price > 0) output[index].price = record.price;
             return true;
         }
         if (record.type == static_cast<uint8_t>(RecoveryEventType::kCancel)) {

@@ -13,12 +13,14 @@ enum class EventType : uint8_t {
     kRejected,
     kExecuted,
     kCanceled,
+    kReplaced,
 };
 
 struct Event {
     EventType type = EventType::kRejected;
     uint64_t order_id = 0;
     int64_t quantity = 0;
+    int64_t price = 0;
     uint8_t reason = 0;
 };
 
@@ -46,6 +48,7 @@ public:
     // J: rejected, order id at 1..8, reason at 9
     // E: executed, order id at 1..8, quantity at 9..12
     // C: canceled, order id at 1..8
+    // U: replaced, order id at 1..8, quantity at 9..12, price at 13..16
     [[nodiscard]] bool parse(const uint8_t* data, size_t length,
                              Event& event, size_t& consumed) const noexcept {
         consumed = 0;
@@ -80,6 +83,13 @@ public:
             if (body_length != kCanceledLength) return false;
             parsed.type = EventType::kCanceled;
             break;
+        case 'U':
+            if (body_length != kReplacedLength) return false;
+            parsed.type = EventType::kReplaced;
+            parsed.quantity = static_cast<int64_t>(detail::be32(body + 9));
+            parsed.price = static_cast<int64_t>(detail::be32(body + 13));
+            if (parsed.quantity <= 0 || parsed.price <= 0) return false;
+            break;
         default:
             return false;
         }
@@ -93,7 +103,8 @@ public:
     static constexpr size_t kRejectedLength = 10;
     static constexpr size_t kExecutedLength = 13;
     static constexpr size_t kCanceledLength = 9;
-    static constexpr size_t kMaxBodyLength = kExecutedLength;
+    static constexpr size_t kReplacedLength = 17;
+    static constexpr size_t kMaxBodyLength = kReplacedLength;
 };
 
 class OrderFlowAdapter {
@@ -108,6 +119,11 @@ public:
                 symbol, ExecutionReport{event.order_id, event.quantity, false});
         if (event.type == EventType::kCanceled)
             return gateway.apply_cancel_report(symbol, event.order_id);
+        if (event.type == EventType::kReplaced)
+            return gateway.apply_replace_report(
+                symbol, event.order_id, event.quantity, event.price);
+        if (event.type == EventType::kRejected)
+            return gateway.apply_reject_report(symbol, event.order_id, event.reason);
         return event.type == EventType::kAccepted;
     }
 

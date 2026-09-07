@@ -184,7 +184,8 @@ struct alignas(kCacheLine) ActiveOrder {
     uint32_t symbol_idx   = 0;
     uint8_t  side         = 0;    // 0 = bid, 1 = ask
     uint8_t  state        = 0;    // 0=pending, 1=live, 2=partial, 3=done
-    uint8_t  _pad[18]{};
+    uint8_t  time_in_force = 0;   // 0=Day, 1=IOC, 2=FOK, 3=GTC
+    uint8_t  _pad[17]{};
 };
 static_assert(sizeof(ActiveOrder) == 64);
 
@@ -275,6 +276,59 @@ struct alignas(kCacheLine) SPSCRing {
         return head.load(std::memory_order_relaxed)
              - tail.load(std::memory_order_relaxed);
     }
+
+    [[nodiscard]] constexpr uint32_t capacity() const noexcept {
+        return Capacity;
+    }
+
+    [[nodiscard]] double occupancy_ratio() const noexcept {
+        const uint64_t current_size = size();
+        return static_cast<double>(current_size) / static_cast<double>(Capacity);
+    }
+
+    [[nodiscard]] bool is_near_capacity(double warning_threshold = 0.80) const noexcept {
+        return occupancy_ratio() >= warning_threshold;
+    }
+};
+
+template <uint32_t NumShards = 4, uint32_t ShardCapacity = (1u << 20)>
+class ShardedTickRing {
+public:
+    static_assert((NumShards & (NumShards - 1)) == 0, "NumShards must be power of two");
+    static_assert((ShardCapacity & (ShardCapacity - 1)) == 0, "ShardCapacity must be power of two");
+    static constexpr uint32_t kShardMask = NumShards - 1;
+
+    bool init(TickMsg* storage_base) noexcept {
+        if (!storage_base) return false;
+        for (uint32_t i = 0; i < NumShards; ++i) {
+            _rings[i].slots = storage_base + (static_cast<size_t>(i) * ShardCapacity);
+            _rings[i].head.store(0, std::memory_order_relaxed);
+            _rings[i].tail.store(0, std::memory_order_relaxed);
+        }
+        _initialised = true;
+        return true;
+    }
+
+    [[nodiscard]] SPSCRing<TickMsg, ShardCapacity>& shard_for_symbol(uint16_t symbol_idx) noexcept {
+        return _rings[symbol_idx & kShardMask];
+    }
+
+    [[nodiscard]] const SPSCRing<TickMsg, ShardCapacity>& shard_for_symbol(uint16_t symbol_idx) const noexcept {
+        return _rings[symbol_idx & kShardMask];
+    }
+
+    [[nodiscard]] SPSCRing<TickMsg, ShardCapacity>& shard(uint32_t shard_idx) noexcept {
+        return _rings[shard_idx & kShardMask];
+    }
+
+    [[nodiscard]] uint32_t shard_count() const noexcept { return NumShards; }
+    [[nodiscard]] uint32_t shard_capacity() const noexcept { return ShardCapacity; }
+    [[nodiscard]] uint64_t total_capacity() const noexcept { return static_cast<uint64_t>(NumShards) * ShardCapacity; }
+    [[nodiscard]] bool is_initialised() const noexcept { return _initialised; }
+
+private:
+    SPSCRing<TickMsg, ShardCapacity> _rings[NumShards];
+    bool _initialised = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -481,6 +535,19 @@ public:
         bool   mlocked;
     };
 
+    struct CapacitySnapshot {
+        uint64_t tick_ring_size;
+        uint32_t tick_ring_capacity;
+        double   tick_ring_occupancy;
+        bool     tick_ring_warning;
+
+        uint64_t telem_ring_size;
+        uint32_t telem_ring_capacity;
+        double   telem_ring_occupancy;
+        bool     telem_ring_warning;
+        uint64_t telem_drops;
+    };
+
     [[nodiscard]] MemoryReport report() const noexcept {
         return {
             slab_sizes::kLOB,
@@ -493,6 +560,21 @@ public:
             slab_sizes::kAIRegion,
             slab_sizes::kGrandTotal,
             _mlocked,
+        };
+    }
+
+    [[nodiscard]] CapacitySnapshot capacity_snapshot() const noexcept {
+        return {
+            tick_ring.size(),
+            tick_ring.capacity(),
+            tick_ring.occupancy_ratio(),
+            tick_ring.is_near_capacity(),
+
+            telem_ring.size(),
+            telem_ring.capacity(),
+            telem_ring.occupancy_ratio(),
+            telem_ring.is_near_capacity(),
+            telemetry_drops.load(std::memory_order_relaxed),
         };
     }
 

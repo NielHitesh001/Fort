@@ -1,5 +1,6 @@
 # CMake build output
 /build/
+/build-*/
 /cmake-build-*/
 /CMakeCache.txt
 /CMakeFiles/
@@ -7,13 +8,13 @@
 /Testing/
 /compile_commands.json
 
-# Locally compiled test executables
-/test_arena
-/test_lob
-/test_feed
-/test_execution
-/test_stress
-/test_ai_telemetry
+# Binaries (if compiled in root without extension)
+/*.bin
+/*.out
+/*.o
+/*.a
+/*.so
+/*.dylib
 
 # Local dependency directories and editor metadata
 /node_modules/

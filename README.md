@@ -6,27 +6,30 @@ Low-latency market microstructure engine for Nasdaq equity trading. The reposito
 
 - **DPDK-based packet processing** — kernel bypass for ultra-low-latency network I/O (polling mode drivers, hugepages)
 - **Packet I/O abstraction** — macOS and default CI builds use a no-DPDK stub; Linux can opt into the real DPDK backend with `-DLUV_ENABLE_DPDK=ON`
-- **ITCH 5.0 protocol decoder** — parses Nasdaq TotalView-ITCH binary market data (order book depth, trades, system events)
+- **Multi-Protocol Market Data Decoders** — polymorphic decoder boundary supporting Nasdaq TotalView-ITCH 5.0 and Simple Binary Encoding (SBE)
+- **Multi-Asset Precision & Metadata** — Instrument registry supporting Equity, Crypto, FX, and Futures decimal conversions
 - **Pre-allocated limit order book** — in-memory order matching for equity instruments
-- **Memory arena allocator** — pre-allocated pools eliminate runtime allocation latency in the hot path
-- **Execution engine** — order routing with configurable transmission modes
+- **Memory arena allocator & Sharded Rings** — pre-allocated memory pool, SPSC ring occupancy monitoring, and deterministic parallel symbol stream sharding
+- **Execution engine & Order Types** — supports IOC, FOK, Day, GTC, Cancel/Replace (`'U'`), Venue Rejections (`'J'`), and in-memory Stop/Pegged triggers
+- **Multi-Tier Circuit Breakers & Dynamic Risk** — Closed/Open/Half-Open state transitions, burst rate limiting, consecutive rejection limits, gross loss thresholds, and granular per-symbol halting
+- **SEC 17a-4 / WORM Audit Trail** — file-locked append-only log with periodic manifest checkpointing, cryptographic root hash verification, range queries, and JSON compliance export
 - **Telemetry & observability** — performance metrics collection (latency histograms, throughput, resource usage)
 - **Simulation mode** — test harness with synthetic market data feed (no DPDK/network required)
 
 ## Architecture
 
 ```
-Network (Nasdaq ITCH feed)
+Network (Nasdaq ITCH / SBE feed)
          ↓
    DPDK Feed Handler (kernel bypass)
          ↓
-   ITCH Protocol Decoder
+   Multi-Protocol Feed Decoder (ITCH 5.0 / SBE)
          ↓
   Limit Order Book (pre-allocated, reader-writer synchronized)
          ↓
-   Execution Engine (order routing)
+   Execution Gateway (TIF, Stop/Pegged triggers, Risk & Circuit Breakers)
          ↓
-   Telemetry (metrics export)
+   Telemetry & SEC 17a-4 WORM Audit Trail
 ```
 
 ### Core Components
@@ -34,12 +37,14 @@ Network (Nasdaq ITCH feed)
 | Module | Purpose | Thread Model |
 |--------|---------|--------------|
 | `luv_feed.hpp` | Base feed interface | N/A (abstract) |
+| `luv_decoder.hpp` | Multi-protocol decoders (ITCH, SBE) & instrument metadata | Stateless / Single thread |
 | `luv_feed_dpdk.hpp` | DPDK packet processor | Single consumer thread, polling mode |
 | `luv_feed_sim.hpp` | Synthetic market feed | Single thread, simulated time |
 | `luv_decode_itch.hpp` | ITCH 5.0 binary decoder | Single thread (called by feed handler) |
 | `luv_lob.hpp` | Limit order book | Reader-writer lock (readers = data consumers, writer = ITCH decoder) |
-| `luv_execution.hpp` | Order execution engine | Single thread, enqueued mutations from LOB |
-| `luv_arena.hpp` | Pre-allocated memory pool | Thread-safe up to pre-allocated size, fails hard on exhaustion |
+| `luv_execution.hpp` | Order execution, TIF, Stop/Pegged triggers & risk gateway | Single thread, enqueued mutations from LOB |
+| `luv_safety.hpp` | Multi-tier circuit breaker & SEC 17a-4 WORM audit log | Thread-safe atomic state transitions |
+| `luv_arena.hpp` | Pre-allocated memory pool & Sharded SPSC rings | Thread-safe up to pre-allocated size |
 | `luv_telemetry.hpp` | Performance metrics | Lock-free ring buffer for event recording |
 | `luv_consumer.hpp` | Generic data consumer interface | N/A (abstract) |
 | `luv_features.hpp` | Feature flags & configuration | Read-only after startup |

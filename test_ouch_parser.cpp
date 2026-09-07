@@ -39,6 +39,18 @@ int main() {
     assert(event.order_id == 42 && event.quantity == 25);
     assert(consumed == executed.size());
 
+    std::array<uint8_t, 19> replaced{};
+    replaced[0] = 0;
+    replaced[1] = 17;
+    replaced[2] = 'U';
+    put_u64_be(replaced.data() + 3, 42);
+    put_u32_be(replaced.data() + 11, 50);
+    put_u32_be(replaced.data() + 15, 1'050'000);
+    assert(parser.parse(replaced.data(), replaced.size(), event, consumed));
+    assert(event.type == luv::ouch::EventType::kReplaced);
+    assert(event.order_id == 42 && event.quantity == 50 && event.price == 1'050'000);
+    assert(consumed == replaced.size());
+
     luv::Arena arena;
     assert(arena.init());
     luv::ExecutionGateway gateway;
@@ -57,8 +69,15 @@ int main() {
     intent.client_order_id = 42;
     luv::OutboundPacket packet{};
     assert(gateway.try_build(intent, packet).pass == 1);
+
+    // Test replace through OrderFlowAdapter
+    assert(luv::ouch::OrderFlowAdapter{}.consume(
+        replaced.data(), replaced.size(), 3, gateway, consumed));
+    assert(arena.exec_states[3].orders[0].qty == 50);
+    assert(arena.exec_states[3].orders[0].price == 1'050'000);
+
     std::array<uint8_t, 15> fill = executed;
-    put_u32_be(fill.data() + 11, 25);
+    put_u32_be(fill.data() + 11, 50);
     assert(luv::ouch::OrderFlowAdapter{}.consume(
         fill.data(), fill.size(), 3, gateway, consumed));
     assert(arena.exec_states[3].risk.order_count == 0);

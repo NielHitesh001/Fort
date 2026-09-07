@@ -86,6 +86,7 @@ function(luv_add_test test_name)
 endfunction()
 
 set(LUV_TESTS
+    advanced_circuit_breaker
     ai_telemetry
     arena
     audit_integrity
@@ -98,6 +99,8 @@ set(LUV_TESTS
     feed
     lob
     moldudp64_fixture
+    multi_feed_and_compliance
+    order_types
     ouch_parser
     prometheus_export
     risk_validator

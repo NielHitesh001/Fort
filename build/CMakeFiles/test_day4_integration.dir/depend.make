@@ -1,2 +1,0 @@
-# Empty dependencies file for test_day4_integration.
-# This may be replaced when dependencies are built.

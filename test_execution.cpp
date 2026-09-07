@@ -94,7 +94,23 @@ void test_branchless_risk() {
     assert(decision.pass == 0);
     assert((decision.reject_mask & luv::exec::kRejectPrice) != 0);
 
-    std::printf("  [OK] pass, fat-finger, position, stale-alpha, halt masks\n");
+    // Test price collar
+    arena.exec_states[3].risk.halted = 0;
+    limits.reference_price = 1'234'500;
+    limits.max_price_collar_pct = 5; // 5% max deviation
+    risk.set_limits(3, limits);
+
+    intent = make_intent(now);
+    intent.price = 1'234'500; // Exact match: pass
+    assert(risk.evaluate(intent).pass == 1);
+
+    intent = make_intent(now);
+    intent.price = 1'500'000; // > 5% deviation: reject
+    decision = risk.evaluate(intent);
+    assert(decision.pass == 0);
+    assert((decision.reject_mask & luv::exec::kRejectPrice) != 0);
+
+    std::printf("  [OK] pass, fat-finger, position, stale-alpha, halt, price collar masks\n");
 }
 
 void test_ouch_template_and_gateway() {
@@ -341,6 +357,77 @@ void test_recovery_failure_preserves_live_order() {
     std::printf("  [OK] failed fill persistence leaves live order unchanged\n");
 }
 
+void test_order_replace_flow() {
+    std::printf("\n== Order replace flow ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+    luv::ExecutionGateway gateway;
+    assert(gateway.init(arena));
+
+    luv::exec::RiskLimits limits {};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 10'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    gateway.risk().set_limits(3, limits);
+
+    const uint64_t now = now_ns();
+    auto intent = make_intent(now);
+    intent.time_in_force = luv::exec::kIOC;
+    luv::OutboundPacket packet {};
+    assert(gateway.try_build(intent, packet).pass == 1);
+    assert(load_u32_be(packet.bytes + luv::exec::ouch::kTimeInForceOffset) == luv::exec::kIOC);
+
+    // Try replace on active order
+    luv::exec::OrderReplaceIntent replace_intent {};
+    replace_intent.symbol_idx = 3;
+    replace_intent.original_order_id = intent.client_order_id;
+    replace_intent.replacement_order_id = 0xAABBCCDEu;
+    replace_intent.new_qty = 150;
+    replace_intent.new_price = 1'250'000;
+    replace_intent.alpha_timestamp_ns = now;
+    replace_intent.now_ns = now;
+    replace_intent.time_in_force = luv::exec::kDay;
+
+    luv::OutboundPacket replace_packet {};
+    assert(gateway.try_replace(replace_intent, replace_packet).pass == 1);
+    assert(replace_packet.len == luv::exec::ouch::kReplaceOrderLen);
+    assert(replace_packet.bytes[luv::exec::ouch::kReplaceMsgTypeOffset] == 'U');
+    assert(load_u32_be(replace_packet.bytes + luv::exec::ouch::kReplaceExistingTokenOffset) == intent.client_order_id);
+    assert(load_u32_be(replace_packet.bytes + luv::exec::ouch::kReplaceReplacementTokenOffset) == replace_intent.replacement_order_id);
+    assert(load_u32_be(replace_packet.bytes + luv::exec::ouch::kReplaceQtyOffset) == 150);
+    assert(load_u32_be(replace_packet.bytes + luv::exec::ouch::kReplacePriceOffset) == 1'250'000);
+
+    // Apply replace report
+    assert(gateway.apply_replace_report(3, intent.client_order_id, 150, 1'250'000));
+    assert(arena.exec_states[3].orders[0].qty == 150);
+    assert(arena.exec_states[3].orders[0].price == 1'250'000);
+    assert(arena.exec_states[3].risk.net_position == 150);
+
+    std::printf("  [OK] order replace built and applied successfully\n");
+}
+
+void test_circuit_breaker_cooldown() {
+    std::printf("\n== Circuit breaker cool-down and auto-reset ==\n");
+
+    luv::CircuitBreaker breaker(2, 500'000); // 2 failures, 500us cool-down
+    assert(breaker.allow(1'000'000));
+
+    breaker.record_failure(1'000'000);
+    assert(!breaker.tripped());
+    assert(breaker.allow(1'000'100));
+
+    breaker.record_failure(1'000'200);
+    assert(breaker.tripped());
+    assert(!breaker.allow(1'000'300)); // Within cool-down (100us < 500us)
+
+    // After cool-down period
+    assert(breaker.allow(1'000'200 + 500'000 + 1));
+    assert(!breaker.tripped()); // Auto-reset
+
+    std::printf("  [OK] circuit breaker cool-down and auto-reset verified\n");
+}
+
 void benchmark_risk_core() {
     std::printf("\n== Risk timing sample ==\n");
 
@@ -381,6 +468,8 @@ int main() {
 
     test_branchless_risk();
     test_ouch_template_and_gateway();
+    test_order_replace_flow();
+    test_circuit_breaker_cooldown();
     test_production_controls();
     test_duplicate_order_id_fails_closed();
     test_gateway_fail_closed_controls();
