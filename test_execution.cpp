@@ -2,9 +2,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <unistd.h>
 
 #include "luv_arena.hpp"
 #include "luv_execution.hpp"
+#include "luv_safety.hpp"
 
 namespace {
 
@@ -134,6 +136,19 @@ void test_ouch_template_and_gateway() {
     assert(arena.exec_states[3].risk.net_position == 100);
     assert(arena.exec_states[3].orders[0].order_id == intent.client_order_id);
 
+    for (uint32_t i = 1; i < luv::Config::kMaxActiveOrders; ++i) {
+        auto additional = intent;
+        additional.client_order_id += i;
+        const auto accepted = gateway.try_build(additional, packet);
+        assert(accepted.pass == 1);
+    }
+    auto over_capacity = intent;
+    over_capacity.client_order_id = 0xCCDD0011u;
+    const auto capacity_reject = gateway.try_build(over_capacity, packet);
+    assert(capacity_reject.pass == 0);
+    assert(packet.len == 0);
+    assert(arena.exec_states[3].risk.halted == 1);
+
     auto reject = intent;
     reject.qty = 5'000;
     luv::OutboundPacket rejected_packet {};
@@ -154,6 +169,71 @@ void test_ouch_template_and_gateway() {
     assert((capacity_decision.reject_mask & luv::exec::kRejectOrderCapacity) != 0);
 
     std::printf("  [OK] fixed offsets patched and rejects suppress packet len\n");
+}
+
+void test_production_controls() {
+    std::printf("\n== Production controls ==\n");
+
+    luv::SequenceTracker sequence;
+    assert(sequence.observe(100) == luv::SequenceResult::kFirst);
+    assert(sequence.observe(102) == luv::SequenceResult::kGap);
+    assert(sequence.gaps() == 1);
+    assert(sequence.observe(102) == luv::SequenceResult::kDuplicate);
+
+    luv::CircuitBreaker breaker(2);
+    breaker.record_failure();
+    assert(breaker.allow());
+    breaker.record_failure();
+    assert(!breaker.allow());
+    breaker.reset();
+    assert(breaker.allow());
+
+    luv::OrderRateLimiter limiter(1);
+    assert(limiter.try_acquire());
+    assert(!limiter.try_acquire());
+    limiter.release();
+    assert(limiter.try_acquire());
+
+    std::printf("  [OK] sequence gaps, circuit breaker, and rate limit\n");
+}
+
+void test_audit_admission() {
+    std::printf("\n== Durable audit admission ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+    luv::ExecutionGateway gateway;
+    assert(gateway.init(arena));
+
+    luv::DurableAuditLog audit;
+    const char* path = "/tmp/luv-execution-audit-test.bin";
+    ::unlink(path);
+    assert(audit.open(path, 1));
+    gateway.set_audit_log(&audit);
+
+    luv::exec::RiskLimits limits {};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 10'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    gateway.risk().set_limits(3, limits);
+
+    const auto intent = make_intent(now_ns());
+    luv::OutboundPacket packet {};
+    assert(gateway.try_build(intent, packet).pass == 1);
+    assert(audit.size() == 1);
+    assert(gateway.apply_execution_report(
+        3, luv::ExecutionReport{intent.client_order_id, 40, false}));
+    assert(arena.exec_states[3].orders[0].filled_qty == 40);
+    assert(arena.exec_states[3].orders[0].state == 2);
+    assert(gateway.apply_execution_report(
+        3, luv::ExecutionReport{intent.client_order_id, 60, true}));
+    assert(arena.exec_states[3].risk.order_count == 0);
+    assert(!gateway.apply_execution_report(
+        3, luv::ExecutionReport{intent.client_order_id, 1, false}));
+    audit.close();
+    ::unlink(path);
+
+    std::printf("  [OK] accepted order durably recorded\n");
 }
 
 void benchmark_risk_core() {
@@ -196,6 +276,8 @@ int main() {
 
     test_branchless_risk();
     test_ouch_template_and_gateway();
+    test_production_controls();
+    test_audit_admission();
     benchmark_risk_core();
 
     std::printf("\nAll execution tests passed.\n");
