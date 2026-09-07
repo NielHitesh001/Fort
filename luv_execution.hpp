@@ -292,11 +292,22 @@ public:
         }
         exec::RiskDecision decision = _risk.evaluate(intent);
         const RiskState& risk = _arena->exec_states[intent.symbol_idx].risk;
+        const uint8_t risk_pass = decision.pass;
         const uint8_t capacity_ok = static_cast<uint8_t>(
             risk.order_count < Config::kMaxActiveOrders);
         decision.pass &= capacity_ok;
         decision.reject_mask |= static_cast<uint8_t>(
             (capacity_ok ^ 1u) * exec::kRejectOrderCapacity);
+        if (!risk_pass) {
+            packet.len = 0;
+            ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
+            return decision;
+        }
+        if (!capacity_ok) {
+            _arena->exec_states[intent.symbol_idx].risk.halted = 1;
+            packet.len = 0;
+            return decision;
+        }
 
         const bool built = decision.pass && _ouch.build_enter_order(intent, packet);
         const uint8_t built_bit = static_cast<uint8_t>(built);
@@ -325,6 +336,21 @@ public:
                                            intent.client_order_id,
                                            intent.price, intent.qty,
                                            0, intent.side, 'A')) {
+                release_order_slot(intent);
+                decision.pass = 0;
+                decision.reject_mask |= exec::kRejectHalted;
+                packet.len = 0;
+                ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
+                _breaker.record_failure();
+            }
+            if (decision.pass && _recovery_ledger &&
+                !_recovery_ledger->append_and_flush(RecoveryEvent{
+                    RecoveryEventType::kAdd,
+                    intent.client_order_id,
+                    intent.qty,
+                    intent.price,
+                    static_cast<uint8_t>(intent.side),
+                    intent.now_ns})) {
                 release_order_slot(intent);
                 decision.pass = 0;
                 decision.reject_mask |= exec::kRejectHalted;

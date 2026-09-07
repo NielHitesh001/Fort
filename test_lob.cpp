@@ -173,6 +173,87 @@ void test_sim_feed_pipeline() {
                 static_cast<unsigned long long>(consumer.ticks_processed()));
 }
 
+void test_fault_injected_feed() {
+    std::printf("\n== Fault-injected SimFeedSource -> LOB ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+
+    luv::SimConfig cfg{};
+    cfg.synthetic_symbols = 16;
+    cfg.target_rate_hz = 0;
+    cfg.prebuf_count = 512;
+    cfg.seed = 0x1234;
+    cfg.drop_rate = 0.35;
+    cfg.reorder_window = 16;
+    cfg.burst_size = 8;
+    cfg.burst_interval = 32;
+
+    luv::SimFeedSource feed(cfg);
+    assert(feed.init(arena));
+    luv::Consumer consumer;
+    assert(consumer.init(arena));
+
+    for (uint32_t i = 0; i < 5'000; ++i) {
+        (void)feed.poll();
+        while (consumer.process_one()) {}
+    }
+    while (consumer.process_one()) {}
+
+    assert(feed.total_dropped() + feed.total_messages() == 5'000);
+    assert(consumer.ticks_processed() == feed.total_messages());
+    assert(consumer.lob().active_order_count() <
+           luv::LOBEngine::order_ref_map_capacity());
+    for (uint16_t sym = 0; sym < cfg.synthetic_symbols; ++sym) {
+        assert(consumer.lob().bid_level_count(sym) <= luv::Config::kLevelsPerSide);
+        assert(consumer.lob().ask_level_count(sym) <= luv::Config::kLevelsPerSide);
+    }
+
+    std::printf("  [OK] dropped=%llu decoded=%llu active_orders=%u\n",
+                static_cast<unsigned long long>(feed.total_dropped()),
+                static_cast<unsigned long long>(feed.total_messages()),
+                consumer.lob().active_order_count());
+}
+
+void test_aggressive_fault_injected_feed() {
+    std::printf("\n== Aggressive burst + reorder -> LOB ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+
+    luv::SimConfig cfg{};
+    cfg.synthetic_symbols = 16;
+    cfg.target_rate_hz = 0;
+    cfg.prebuf_count = 64;
+    cfg.seed = 0;
+    cfg.drop_rate = 0.5;
+    cfg.reorder_window = 63;
+    cfg.burst_size = 64;
+    cfg.burst_interval = 1;
+
+    luv::SimFeedSource feed(cfg);
+    assert(feed.init(arena));
+    luv::Consumer consumer;
+    assert(consumer.init(arena));
+
+    constexpr uint32_t attempts = 2'000;
+    for (uint32_t i = 0; i < attempts; ++i) {
+        (void)feed.poll();
+        while (consumer.process_one()) {}
+    }
+    while (consumer.process_one()) {}
+
+    assert(feed.total_dropped() + feed.total_messages() == attempts);
+    assert(consumer.ticks_processed() == feed.total_messages());
+    assert(consumer.lob().active_order_count() <
+           luv::LOBEngine::order_ref_map_capacity());
+    std::printf("  [OK] attempts=%u dropped=%llu decoded=%llu active_orders=%u\n",
+                attempts,
+                static_cast<unsigned long long>(feed.total_dropped()),
+                static_cast<unsigned long long>(feed.total_messages()),
+                consumer.lob().active_order_count());
+}
+
 }  // namespace
 
 int main() {
@@ -186,6 +267,8 @@ int main() {
 
     test_consumer_and_features();
     test_sim_feed_pipeline();
+    test_fault_injected_feed();
+    test_aggressive_fault_injected_feed();
 
     std::printf("\nAll LOB tests passed.\n");
     return 0;

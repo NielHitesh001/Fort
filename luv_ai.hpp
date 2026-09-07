@@ -135,14 +135,8 @@ public:
     {
 #if defined(LUV_ENABLE_DYNAMIC_MODEL_LOADING) && \
     (defined(__unix__) || defined(__APPLE__))
-#if defined(__unix__) || defined(__APPLE__)
-#if !defined(LUV_ENABLE_DYNAMIC_MODEL_LOADING)
-    (void)path;
-    (void)predict_symbol;
-    return false;
-#else
         if (!_arena || !path || !predict_symbol) return false;
-    if (!secure_library_path(path)) return false;
+        if (!secure_library_path(path)) return false;
 
         if (!map_artifact_bytes(path)) return false;
 
@@ -160,7 +154,6 @@ public:
         _kind = ai::ModelKind::kTreeliteSharedObject;
         _model_id = 1;
         return true;
-    #endif
 #else
         (void)path;
         (void)predict_symbol;

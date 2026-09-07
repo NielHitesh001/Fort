@@ -1,7 +1,7 @@
 #pragma once
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  LUV — Zero-Copy AI Inference Engine                                    ║
+// ║  LUV — Market microstructure engine                                     ║
 // ║  luv_decode_itch.hpp — Stateless ITCH 5.0 binary decoder               ║
 // ║                                                                          ║
 // ║  Converts raw ITCH 5.0 wire bytes into TickMsg structs (defined in      ║

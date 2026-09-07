@@ -1,7 +1,7 @@
 #pragma once
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  LUV — Zero-Copy AI Inference Engine                                    ║
+// ║  LUV — Market microstructure engine                                     ║
 // ║  luv_feed_sim.hpp — Simulated / replay feed source                      ║
 // ║                                                                          ║
 // ║  Two modes:                                                              ║
@@ -45,6 +45,10 @@ struct SimConfig {
     uint64_t target_rate_hz    = 1'000'000;  // target messages per second (0 = unlimited)
     uint64_t seed              = 0xDEAD'BEEF'CAFE'BABEull;  // PRNG seed
     uint32_t prebuf_count      = 1u << 16;   // 65536 pre-generated raw ITCH messages
+    double   drop_rate         = 0.0;        // probability [0,1] of dropping a message
+    uint32_t reorder_window    = 0;          // synthetic-only shuffle window
+    uint32_t burst_size        = 0;          // messages emitted without pacing
+    uint32_t burst_interval    = 0;          // messages between bursts
 
     // Replay mode: path to a binary file of concatenated raw ITCH messages
     const char* replay_path    = nullptr;
@@ -128,6 +132,7 @@ public:
 
     [[nodiscard]] bool init(Arena& arena) noexcept override {
         if (!arena.is_initialised()) return false;
+        if (!(_cfg.drop_rate >= 0.0 && _cfg.drop_rate <= 1.0)) return false;
         _arena = &arena;
 
         if (_cfg.mode == SimConfig::Mode::kSynthetic) {
@@ -153,6 +158,10 @@ public:
         return _total_bytes;
     }
 
+    [[nodiscard]] uint64_t total_dropped() const noexcept {
+        return _total_dropped;
+    }
+
 private:
     // ── Configuration and state ──────────────────────────────────────────
     SimConfig       _cfg{};
@@ -161,6 +170,7 @@ private:
     // Counters (written only by the ingestion thread)
     uint64_t        _total_msgs    = 0;
     uint64_t        _total_bytes   = 0;
+    uint64_t        _total_dropped = 0;
 
     // ── Synthetic mode state ─────────────────────────────────────────────
     //
@@ -175,6 +185,10 @@ private:
     uint32_t*       _msg_lengths   = nullptr;   // length of each message
     uint32_t        _prebuf_count  = 0;
     uint32_t        _prebuf_idx    = 0;         // round-robin cursor
+    uint32_t*       _pending_idx   = nullptr;   // reorder window indices
+    uint32_t        _pending_count = 0;
+    uint32_t        _reorder_capacity = 0;
+    uint32_t        _reorder_source_remaining = 0;
     size_t          _raw_buf_total = 0;         // total mmap size
 
     detail::Xoshiro256 _rng{0};
@@ -185,6 +199,8 @@ private:
     // Rate limiting
     uint64_t        _ns_per_msg    = 0;         // 0 = unlimited
     uint64_t        _last_emit_ns  = 0;         // last message timestamp
+    uint32_t        _messages_since_burst = 0;
+    uint32_t        _burst_remaining = 0;
 
     // ── Replay mode state ────────────────────────────────────────────────
     const uint8_t*  _replay_base   = nullptr;
@@ -210,9 +226,18 @@ private:
         }
 
         // Allocate raw message buffer + length array in one mmap
+        if (_prebuf_count == 0) return false;
+        _reorder_capacity = (_cfg.reorder_window < _prebuf_count)
+                   ? _cfg.reorder_window : _prebuf_count;
         const size_t msg_slab = static_cast<size_t>(_prebuf_count) * kSimMaxMsgLen;
         const size_t len_slab = static_cast<size_t>(_prebuf_count) * sizeof(uint32_t);
-        _raw_buf_total = align_up(msg_slab + len_slab, 4096);
+        const size_t reorder_slab = static_cast<size_t>(_reorder_capacity) *
+                                    sizeof(uint32_t);
+        if (msg_slab > SIZE_MAX - len_slab ||
+            msg_slab + len_slab > SIZE_MAX - reorder_slab) return false;
+        const size_t slab_total = msg_slab + len_slab + reorder_slab;
+        if (!can_align_up(slab_total, 4096)) return false;
+        _raw_buf_total = align_up(slab_total, 4096);
 
         void* mem = ::mmap(nullptr, _raw_buf_total,
                            PROT_READ | PROT_WRITE,
@@ -221,6 +246,7 @@ private:
 
         _raw_buf     = static_cast<uint8_t*>(mem);
         _msg_lengths = reinterpret_cast<uint32_t*>(_raw_buf + msg_slab);
+        _pending_idx = reinterpret_cast<uint32_t*>(_raw_buf + msg_slab + len_slab);
 
         // Fill buffer with synthetic ITCH messages
         generate_synthetic_messages();
@@ -444,27 +470,35 @@ private:
     // by comparing elapsed nanoseconds against _ns_per_msg.
 
     [[nodiscard]] uint32_t poll_synthetic() noexcept {
-        // Rate limit check
-        if (_ns_per_msg > 0) [[likely]] {
+        if (!burst_active() && _ns_per_msg > 0) [[likely]] {
             const uint64_t now = now_ns();
             if (now - _last_emit_ns < _ns_per_msg) {
                 return 0;  // too soon
             }
             _last_emit_ns = now;
         }
+        if (_arena->tick_ring.size() >= Config::kTickCapacity) [[unlikely]] {
+            return 0;
+        }
 
-        // Claim a slot in the tick ring
+        const uint32_t source_idx = next_synthetic_index();
+        const uint8_t* raw = _raw_buf +
+            static_cast<size_t>(source_idx) * kSimMaxMsgLen;
+        const uint32_t len = _msg_lengths[source_idx];
+        note_attempt();
+
+        if (should_drop()) {
+            ++_total_dropped;
+            _total_bytes += len;
+            return 0;
+        }
+
+        // Claim only after drop injection so a dropped message cannot leave
+        // an uncommitted reservation in the SPSC ring.
         TickMsg* slot = _arena->tick_ring.try_claim();
         if (!slot) [[unlikely]] {
             return 0;  // ring full — consumer is behind
         }
-
-        // Get the next pre-generated raw message (round-robin)
-        const uint8_t* raw = _raw_buf +
-            static_cast<size_t>(_prebuf_idx) * kSimMaxMsgLen;
-        const uint32_t len = _msg_lengths[_prebuf_idx];
-
-        _prebuf_idx = (_prebuf_idx + 1) % _prebuf_count;
 
         // Decode through the standard production path.
         // decode_itch() writes directly into *slot.
@@ -527,13 +561,15 @@ private:
     // each message is prefixed with a 2-byte big-endian length.
 
     [[nodiscard]] uint32_t poll_replay() noexcept {
-        // Rate limit check
-        if (_ns_per_msg > 0) [[likely]] {
+        if (!burst_active() && _ns_per_msg > 0) [[likely]] {
             const uint64_t now = now_ns();
             if (now - _last_emit_ns < _ns_per_msg) {
                 return 0;
             }
             _last_emit_ns = now;
+        }
+        if (_arena->tick_ring.size() >= Config::kTickCapacity) [[unlikely]] {
+            return 0;
         }
 
         // Check if we have at least the 2-byte length prefix remaining
@@ -555,6 +591,14 @@ private:
         }
 
         const uint8_t* raw = p + 2;
+        note_attempt();
+
+        if (should_drop()) {
+            ++_total_dropped;
+            _total_bytes += 2 + msg_len;
+            _replay_cursor += 2 + msg_len;
+            return 0;
+        }
 
         // Claim a slot
         TickMsg* slot = _arena->tick_ring.try_claim();
@@ -572,6 +616,54 @@ private:
         _total_bytes += 2 + msg_len;
         _replay_cursor += 2 + msg_len;
         return ok ? 1 : 0;
+    }
+
+    [[nodiscard]] bool burst_active() const noexcept {
+        return _burst_remaining != 0;
+    }
+
+    void note_attempt() noexcept {
+        if (_burst_remaining != 0) {
+            --_burst_remaining;
+        } else if (_cfg.burst_size > 0 && _cfg.burst_interval > 0) {
+            ++_messages_since_burst;
+            if (_messages_since_burst >= _cfg.burst_interval) {
+                _messages_since_burst = 0;
+                _burst_remaining = _cfg.burst_size;
+            }
+        }
+    }
+
+    [[nodiscard]] bool should_drop() noexcept {
+        if (_cfg.drop_rate <= 0.0) return false;
+        if (_cfg.drop_rate >= 1.0) return true;
+         return static_cast<double>(_rng.uniform_u32(0, 999)) <
+             _cfg.drop_rate * 1000.0;
+    }
+
+    [[nodiscard]] uint32_t next_synthetic_index() noexcept {
+        if (_reorder_capacity == 0) {
+            const uint32_t index = _prebuf_idx;
+            _prebuf_idx = (_prebuf_idx + 1) % _prebuf_count;
+            return index;
+        }
+
+        if (_pending_count == 0) {
+            while (_pending_count < _reorder_capacity) {
+                _pending_idx[_pending_count++] = _prebuf_idx;
+                _prebuf_idx = (_prebuf_idx + 1) % _prebuf_count;
+            }
+            _reorder_source_remaining = _prebuf_count - _reorder_capacity;
+        } else if (_reorder_source_remaining != 0) {
+            _pending_idx[_pending_count++] = _prebuf_idx;
+            _prebuf_idx = (_prebuf_idx + 1) % _prebuf_count;
+            --_reorder_source_remaining;
+        }
+
+        const uint32_t choice = _rng.uniform_u32(0, _pending_count - 1);
+        const uint32_t index = _pending_idx[choice];
+        _pending_idx[choice] = _pending_idx[--_pending_count];
+        return index;
     }
 
     // ── Clock helper ─────────────────────────────────────────────────────

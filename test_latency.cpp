@@ -3,12 +3,21 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <string>
+#include <sys/utsname.h>
 #include <vector>
 
 #include "luv_arena.hpp"
 #include "luv_lob.hpp"
 
 int main() {
+    utsname host{};
+    (void)::uname(&host);
+    std::printf("benchmark: luv_latency_benchmark\n");
+    std::printf("compiler: %s\n", __VERSION__);
+    std::printf("host: %s %s %s\n", host.sysname, host.release, host.machine);
+    std::printf("iterations: %u\n", 20'000u);
+
     luv::Arena arena;
     assert(arena.init());
     luv::LOBEngine lob;

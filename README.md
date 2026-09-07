@@ -1,12 +1,13 @@
 # LUV---Flicker-
 
-Low-latency market microstructure engine for Nasdaq equity trading. Ingests ITCH protocol market data via DPDK kernel-bypass, maintains an in-memory limit order book, and executes trades with microsecond-scale latency.
+Low-latency market microstructure engine for Nasdaq equity trading. The repository includes a simulation feed, ITCH decoding, an in-memory limit order book, execution/risk controls, and optional DPDK integration.
 
 ## Features
 
 - **DPDK-based packet processing** — kernel bypass for ultra-low-latency network I/O (polling mode drivers, hugepages)
+- **Packet I/O abstraction** — macOS and default CI builds use a no-DPDK stub; Linux can opt into the real DPDK backend with `-DLUV_ENABLE_DPDK=ON`
 - **ITCH 5.0 protocol decoder** — parses Nasdaq TotalView-ITCH binary market data (order book depth, trades, system events)
-- **Lock-free limit order book** — in-memory order matching for equity instruments with pre-allocated memory
+- **Pre-allocated limit order book** — in-memory order matching for equity instruments
 - **Memory arena allocator** — pre-allocated pools eliminate runtime allocation latency in the hot path
 - **Execution engine** — order routing with configurable transmission modes
 - **Telemetry & observability** — performance metrics collection (latency histograms, throughput, resource usage)
@@ -21,7 +22,7 @@ Network (Nasdaq ITCH feed)
          ↓
    ITCH Protocol Decoder
          ↓
-   Limit Order Book (lock-free, pre-allocated)
+  Limit Order Book (pre-allocated, reader-writer synchronized)
          ↓
    Execution Engine (order routing)
          ↓
@@ -55,6 +56,9 @@ Network (Nasdaq ITCH feed)
 
 **No unbounded heap allocations** on the critical path. All data structures use the arena allocator.
 
+The LOB itself is not lock-free: mutations take an exclusive reader-writer
+lock, while query accessors take a shared lock where required by the API.
+
 The tick and telemetry queues are strict SPSC rings: exactly one producer may
 claim/commit and exactly one consumer may peek/consume each ring. Build with
 `-DLUV_REQUIRE_MLOCK=ON` for production deployments where failure to lock the
@@ -65,24 +69,30 @@ locking for simulation environments.
 
 ### Dependencies
 
-- **C++17 compiler** (clang-14+ or g++-11+)
+- **C++20 compiler** (recent Clang or GCC)
 - **DPDK 21.11+** (for production DPDK feed; optional if using simulation)
-- **GNU Make**
+- **CMake 3.20+**
+
+The DPDK backend is optional. On macOS, DPDK headers are never included and
+`SimFeedSource` is the supported feed for local execution. On Linux, configure
+with `-DLUV_ENABLE_DPDK=ON` and install a `libdpdk` pkg-config package to build
+the native packet backend.
 
 ### Quickstart
 
 ```bash
-# Simulation mode (no DPDK, no network)
-make sim
+# Configure and build the simulation engine (no DPDK or network required)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 
-# Production build (requires DPDK)
-make DPDK_ROOT=/path/to/dpdk
+# Run the default test suite
+ctest --test-dir build --output-on-failure
 
-# Run tests
-make test
+# Run the simulation engine
+./build/luv_engine --messages 100000
 
-# Clean
-make clean
+# Remove generated build files
+rm -rf build
 ```
 
 ### Environment Variables
@@ -105,13 +115,19 @@ export EXECUTION_MODE=live                 # 'live' or 'paper'
 
 int main() {
     // Create components
-    LuvArena arena(1024 * 1024);  // 1 MB pre-allocated
-    LuvLOB lob(arena);
-    LuvSimFeed feed(lob);
-    LuvExecution execution(lob);
+    luv::Arena arena;
+    if (!arena.init()) return 1;
+
+    luv::SimConfig feed_config{};
+    luv::SimFeedSource feed(feed_config);
+    if (!feed.init(arena)) return 1;
+
+    luv::Consumer consumer;
+    luv::ExecutionGateway execution;
+    if (!consumer.init(arena) || !execution.init(arena)) return 1;
 
     // Run simulation
-    while (feed.next()) {
+    while (feed.poll()) {
         // Feed consumes ITCH events and mutates LOB
         // Execution engine processes mutations
         // Telemetry records latencies
@@ -134,15 +150,17 @@ std::cout << "Order processing: p50=" << latency_p50 << "us, p99="
 
 ## Performance
 
-Typical latencies (from test suite, with DPDK on modern hardware):
+The repository contains `luv_latency_benchmark`, but no benchmark results are
+published here yet. Latency depends heavily on compiler, CPU, kernel, NUMA
+placement, feed configuration, and whether DPDK is enabled. Run the benchmark
+on the target host. Its output includes the compiler, operating system, host
+architecture, and iteration count; record that output with the commit and feed
+configuration before using measurements for capacity planning. These numbers
+measure local simulated LOB adds, not a DPDK feed-to-execution round trip.
 
-| Operation | p50 | p99 | p99.9 |
-|-----------|-----|-----|-------|
-| Add order to LOB | 0.5 µs | 1.2 µs | 2.1 µs |
-| Order execution | 1.1 µs | 2.3 µs | 4.5 µs |
-| Full feed→exec roundtrip | 2.8 µs | 5.6 µs | 9.2 µs |
-
-**Conditions:** 8-core machine, DPDK hugepages, affinity pinning, ~500 symbols, 10k orders/sec feed rate.
+```bash
+./build/luv_latency_benchmark
+```
 
 ## Deployment
 
@@ -218,35 +236,33 @@ Current capabilities:
 - Prototype execution timing optimizer
 - Research-only; no guarantees on correctness or safety
 
-To disable (default):
-```cpp
-#define LUV_AI_ENABLED 0
+Dynamic shared-object model loading is disabled by default. Enable it only for
+trusted model artifacts with:
+```bash
+cmake -S . -B build -DLUV_ENABLE_DYNAMIC_MODEL_LOADING=ON
 ```
 
 ## Testing
 
 ```bash
 # Run all tests
-make test
+ctest --test-dir build --output-on-failure
 
 # Individual test suites
-./test_arena        # Memory allocator tests
-./test_lob          # Order book correctness
-./test_feed         # Feed processing (simulation)
-./test_execution    # Order routing
-./test_stress       # Load & concurrency
-./test_ai_telemetry # Telemetry + AI integration
+./build/luv_arena        # Memory allocator tests
+./build/luv_lob          # Order book correctness
+./build/luv_feed         # Feed processing (simulation)
+./build/luv_execution    # Order routing
+./build/luv_stress       # Load & concurrency
+./build/luv_ai_telemetry # Telemetry + AI integration
 ```
 
-Expected output:
-```
-test_arena: PASS (1000 allocations, 0 leaks)
-test_lob: PASS (insert/cancel/execute correctness verified)
-test_feed: PASS (100k events, 2.1ms total)
-test_execution: PASS (order routing + transmission)
-test_stress: PASS (10k concurrent orders, no races detected)
-test_ai_telemetry: PASS (model inference < 100µs)
-```
+CTest reports pass/fail status for each executable. CI runs a bounded 250,000
+message stress test and an AddressSanitizer/UndefinedBehaviorSanitizer build.
+The default local configuration skips the stress test; enable it with
+`-DLUV_ENABLE_LONG_STRESS_TESTS=ON`. Neither test claims race-freedom or a
+fixed latency; use ThreadSanitizer and target-host benchmarks separately when
+investigating those properties.
 
 ## Roadmap
 

@@ -1,7 +1,7 @@
 #pragma once
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  LUV — Zero-Copy AI Inference Engine                                     ║
+// ║  LUV — Market microstructure engine                                      ║
 // ║  luv_lob.hpp — Limit Order Book reconstruction engine                    ║
 // ║                                                                          ║
 // ║  Reconstructs a full depth-of-book from ITCH 5.0 TickMsg events.         ║
@@ -388,8 +388,8 @@ public:
     [[nodiscard]] int64_t mid_price(uint16_t sym) const noexcept {
         std::shared_lock<std::shared_mutex> lock(_mutex);
         if (sym >= Config::kSymbols) return 0;
-        const int64_t bid = best_bid_price_unlocked(sym);
-        const int64_t ask = best_ask_price_unlocked(sym);
+        const int64_t bid = best_bid_price(sym);
+        const int64_t ask = best_ask_price(sym);
         if (bid == 0 || ask == 0) return 0;
         return (bid + ask) / 2;
     }
@@ -398,8 +398,8 @@ public:
     [[nodiscard]] int64_t spread(uint16_t sym) const noexcept {
         std::shared_lock<std::shared_mutex> lock(_mutex);
         if (sym >= Config::kSymbols) return 0;
-        const int64_t bid = best_bid_price_unlocked(sym);
-        const int64_t ask = best_ask_price_unlocked(sym);
+        const int64_t bid = best_bid_price(sym);
+        const int64_t ask = best_ask_price(sym);
         if (bid == 0 || ask == 0) return 0;
         return ask - bid;
     }

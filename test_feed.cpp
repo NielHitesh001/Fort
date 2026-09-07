@@ -1,6 +1,9 @@
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdint>
 #include <cassert>
+#include <limits>
 #include "luv_arena.hpp"
 #include "luv_decode_itch.hpp"
 #include "luv_feed.hpp"
@@ -213,6 +216,124 @@ static void test_sim_feed_pipeline() {
     printf("  mlocked:     %s\n", r.mlocked ? "yes" : "no");
 }
 
+static void test_fault_injection() {
+       printf("\n══ SimFeedSource fault injection ═══════════════\n");
+
+       for (double invalid_drop_rate : {1.5, -0.1}) {
+              luv::Arena arena;
+              assert(arena.init());
+              luv::SimConfig invalid_cfg{};
+              invalid_cfg.drop_rate = invalid_drop_rate;
+              luv::SimFeedSource invalid_feed(invalid_cfg);
+              assert(!invalid_feed.init(arena));
+       }
+       printf("  [OK] invalid drop rates fail closed\n");
+
+       const double drop_rates[] = {0.0, 0.5, 1.0};
+       for (double drop_rate : drop_rates) {
+              luv::Arena arena;
+              assert(arena.init());
+
+              luv::SimConfig cfg{};
+              cfg.synthetic_symbols = 8;
+              cfg.target_rate_hz = 0;
+              cfg.prebuf_count = 64;
+              cfg.drop_rate = drop_rate;
+
+              luv::SimFeedSource feed(cfg);
+              assert(feed.init(arena));
+
+              constexpr uint32_t attempts = 1'000;
+              for (uint32_t i = 0; i < attempts; ++i) {
+                     (void)feed.poll();
+                     while (arena.tick_ring.try_peek()) arena.tick_ring.consume();
+              }
+
+              assert(feed.total_dropped() + feed.total_messages() == attempts);
+              if (drop_rate == 0.0) assert(feed.total_dropped() == 0);
+              if (drop_rate == 1.0) assert(feed.total_messages() == 0);
+              printf("  [OK] drop_rate=%.1f dropped=%llu decoded=%llu\n",
+                        drop_rate,
+                        static_cast<unsigned long long>(feed.total_dropped()),
+                        static_cast<unsigned long long>(feed.total_messages()));
+       }
+
+       const char* replay_path = "/tmp/luv-feed-drop-replay.bin";
+       FILE* replay = std::fopen(replay_path, "wb");
+       assert(replay != nullptr);
+       const uint8_t replay_message[] = {
+              0, 11, 'Z', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       };
+       assert(std::fwrite(replay_message, 1, sizeof(replay_message), replay) ==
+                 sizeof(replay_message));
+       std::fclose(replay);
+
+       luv::Arena arena;
+       assert(arena.init());
+       luv::SimConfig replay_cfg{};
+       replay_cfg.mode = luv::SimConfig::Mode::kReplay;
+       replay_cfg.replay_path = replay_path;
+       replay_cfg.drop_rate = 1.0;
+       replay_cfg.target_rate_hz = 0;
+       luv::SimFeedSource replay_feed(replay_cfg);
+       assert(replay_feed.init(arena));
+       assert(replay_feed.poll() == 0);
+       assert(replay_feed.total_dropped() == 1);
+       assert(replay_feed.total_messages() == 0);
+       std::remove(replay_path);
+       printf("  [OK] replay drop path preserves sequential cursor\n");
+}
+
+static std::array<uint64_t, 64> collect_reorder_pass(uint64_t seed,
+                                                                                              uint32_t reorder_window) {
+       luv::Arena arena;
+       assert(arena.init());
+       luv::SimConfig cfg{};
+       cfg.synthetic_symbols = 8;
+       cfg.target_rate_hz = 0;
+       cfg.prebuf_count = 64;
+       cfg.seed = seed;
+       cfg.reorder_window = reorder_window;
+
+       luv::SimFeedSource feed(cfg);
+       assert(feed.init(arena));
+       std::array<uint64_t, 64> timestamps{};
+       for (uint32_t i = 0; i < timestamps.size(); ++i) {
+              assert(feed.poll() == 1);
+              luv::TickMsg* message = arena.tick_ring.try_peek();
+              assert(message != nullptr);
+              timestamps[i] = message->timestamp;
+              arena.tick_ring.consume();
+       }
+       assert(feed.total_messages() == timestamps.size());
+       return timestamps;
+}
+
+static void test_reorder_multi_seed() {
+       printf("\n══ Multi-seed reorder validation ═══════════════\n");
+       const uint64_t seeds[] = {
+              0,
+              1,
+              std::numeric_limits<uint64_t>::max(),
+              0x1234'5678'9ABC'DEF0ULL,
+              0xDEAD'BEEF'CAFE'BABEULL,
+       };
+       for (uint64_t seed : seeds) {
+              const auto baseline = collect_reorder_pass(seed, 0);
+              const auto reordered = collect_reorder_pass(seed, 63);
+              auto expected = baseline;
+              auto actual = reordered;
+              std::sort(expected.begin(), expected.end());
+              std::sort(actual.begin(), actual.end());
+              assert(expected == actual);
+              for (size_t i = 1; i < actual.size(); ++i) {
+                     assert(actual[i - 1] != actual[i]);
+              }
+              printf("  [OK] seed=%llu full pass unique and complete\n",
+                        static_cast<unsigned long long>(seed));
+       }
+}
+
 int main() {
     printf("╔══════════════════════════════════════════════════╗\n");
     printf("║  LUV Feed Integration Test                       ║\n");
@@ -221,6 +342,8 @@ int main() {
     test_symbol_table();
     test_decode_itch();
     test_sim_feed_pipeline();
+       test_fault_injection();
+       test_reorder_multi_seed();
 
     printf("\n  ✅ All tests passed.\n\n");
     return 0;

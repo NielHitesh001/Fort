@@ -9,6 +9,8 @@
 
 #include "luv_arena.hpp"
 #include "luv_ai.hpp"
+#include "luv_consumer.hpp"
+#include "luv_feed_sim.hpp"
 #include "luv_telemetry.hpp"
 
 namespace {
@@ -131,6 +133,54 @@ void test_telemetry_bridge() {
     std::printf("  [OK] heartbeat ring -> UDP dashboard packet\n");
 }
 
+int fault_predict(const float*, uint32_t, float* score) {
+    *score = 1.0f;
+    return 0;
+}
+
+void test_fault_injected_ai_feed() {
+    std::printf("\n== Fault-injected AI feed ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+    luv::AIEngine ai;
+    assert(ai.init(arena));
+    ai.bind_predict_fn(&fault_predict, 9);
+
+    luv::SimConfig cfg{};
+    cfg.synthetic_symbols = 16;
+    cfg.target_rate_hz = 0;
+    cfg.prebuf_count = 128;
+    cfg.seed = 0xA5A5;
+    cfg.drop_rate = 0.4;
+    cfg.reorder_window = 32;
+    cfg.burst_size = 24;
+    cfg.burst_interval = 6;
+
+    luv::SimFeedSource feed(cfg);
+    assert(feed.init(arena));
+    luv::Consumer consumer;
+    assert(consumer.init(arena));
+    consumer.set_ai_engine(&ai);
+
+    constexpr uint32_t attempts = 2'000;
+    for (uint32_t i = 0; i < attempts; ++i) {
+        (void)feed.poll();
+        while (consumer.process_one()) {}
+    }
+    while (consumer.process_one()) {}
+
+    assert(feed.total_dropped() + feed.total_messages() == attempts);
+    assert(ai.inference_count() == consumer.ticks_processed());
+    assert(consumer.lob().active_order_count() <
+           luv::LOBEngine::order_ref_map_capacity());
+    std::printf("  [OK] attempts=%u dropped=%llu decoded=%llu inferred=%llu\n",
+                attempts,
+                static_cast<unsigned long long>(feed.total_dropped()),
+                static_cast<unsigned long long>(feed.total_messages()),
+                static_cast<unsigned long long>(ai.inference_count()));
+}
+
 }  // namespace
 
 int main() {
@@ -138,6 +188,7 @@ int main() {
 
     test_ai_engine();
     test_telemetry_bridge();
+    test_fault_injected_ai_feed();
 
     std::printf("\nAll AI/telemetry tests passed.\n");
     return 0;

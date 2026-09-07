@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <random>
+#include <utility>
 
 #include "luv_decode_itch.hpp"
 
@@ -13,6 +14,25 @@ int main() {
 
     std::mt19937_64 rng(0xC0FFEE);
     luv::TickMsg output{};
+
+    const std::array<std::pair<uint8_t, size_t>, 8> message_lengths = {{
+        {'A', luv::itch::kLenAddOrder},
+        {'F', luv::itch::kLenAddOrderMPID},
+        {'E', luv::itch::kLenOrderExecuted},
+        {'C', luv::itch::kLenOrderExecPrice},
+        {'X', luv::itch::kLenOrderCancel},
+        {'D', luv::itch::kLenOrderDelete},
+        {'U', luv::itch::kLenOrderReplace},
+        {'P', luv::itch::kLenTrade},
+    }};
+    for (const auto& [message_type, valid_length] : message_lengths) {
+        std::array<uint8_t, luv::itch::kLenTrade> input{};
+        input[0] = message_type;
+        for (size_t length = 0; length < valid_length; ++length) {
+            assert(!luv::decode_itch(input.data(), length, symbols, output));
+        }
+    }
+
     uint32_t accepted = 0;
     for (uint32_t iteration = 0; iteration < 100'000; ++iteration) {
         std::array<uint8_t, 64> input{};

@@ -9,6 +9,7 @@
 #include "luv_consumer.hpp"
 #include "luv_lob.hpp"
 #include "luv_decode_itch.hpp"
+#include "luv_feed_sim.hpp"
 
 namespace {
 
@@ -187,6 +188,43 @@ void run_engine_burst(uint64_t messages) {
     std::printf("  [OK] no overflow, no budget breach\n");
 }
 
+void run_fault_injected_feed() {
+    std::printf("\n== Fault-injected stress feed ==\n");
+    luv::Arena arena;
+    assert(arena.init());
+
+    luv::SimConfig cfg{};
+    cfg.synthetic_symbols = 32;
+    cfg.target_rate_hz = 0;
+    cfg.prebuf_count = 128;
+    cfg.seed = 0x55AA;
+    cfg.drop_rate = 0.25;
+    cfg.reorder_window = 32;
+    cfg.burst_size = 16;
+    cfg.burst_interval = 8;
+
+    luv::SimFeedSource feed(cfg);
+    assert(feed.init(arena));
+    luv::Consumer consumer;
+    assert(consumer.init(arena));
+
+    constexpr uint32_t attempts = 5'000;
+    for (uint32_t i = 0; i < attempts; ++i) {
+        (void)feed.poll();
+        while (consumer.process_one()) {}
+    }
+    while (consumer.process_one()) {}
+
+    assert(feed.total_dropped() + feed.total_messages() == attempts);
+    assert(consumer.ticks_processed() == feed.total_messages());
+    assert(consumer.lob().active_order_count() <
+           luv::LOBEngine::order_ref_map_capacity());
+    std::printf("  [OK] attempts=%u dropped=%llu decoded=%llu\n",
+                attempts,
+                static_cast<unsigned long long>(feed.total_dropped()),
+                static_cast<unsigned long long>(feed.total_messages()));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -198,6 +236,7 @@ int main(int argc, char** argv) {
 
     std::printf("LUV Engine Stress Test\n");
     run_engine_burst(messages);
+    run_fault_injected_feed();
     std::printf("\nStress test passed.\n");
     return 0;
 }
