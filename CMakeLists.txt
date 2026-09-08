@@ -90,6 +90,8 @@ set(LUV_TESTS
     ai_telemetry
     arena
     audit_integrity
+    chaos_feed
+    clock_sync
     compliance_aml
     concurrency
     crash_recovery
@@ -99,6 +101,7 @@ set(LUV_TESTS
     diagnostics_and_multileg
     execution
     feed
+    fix_protocol
     lob
     lob_sanity
     moldudp64_fixture
