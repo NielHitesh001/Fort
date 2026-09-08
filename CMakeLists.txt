@@ -109,6 +109,7 @@ set(LUV_TESTS
     risk_validator
     sequence_tracker
     shutdown_controller
+    sor_and_gateway
     strategy
     strategy_sandbox
     stress
