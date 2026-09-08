@@ -108,12 +108,15 @@ set(LUV_TESTS
     multi_feed_and_compliance
     order_types
     ouch_parser
+    precision
     prometheus_export
     risk_engine
     risk_validator
     sequence_tracker
+    sharding
     shutdown_controller
     sor_and_gateway
+    stp_mmp
     strategy
     strategy_sandbox
     stress
