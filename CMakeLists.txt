@@ -104,6 +104,7 @@ set(LUV_TESTS
     bond_analytics
     cat_reporting
     cds
+    cftc_rule_575
     chaos_feed
     clearing
     clock_sync
@@ -137,6 +138,7 @@ set(LUV_TESTS
     form_pf
     fx_forward
     fx_triangulation
+    gamma_scalping
     greeks
     hft_feature_pipeline
     hw_watchdog
@@ -196,6 +198,7 @@ set(LUV_TESTS
     telemetry_export
     tick_rule
     var
+    variance_swap
     vol_surface
     vpin
     worm_audit
