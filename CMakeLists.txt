@@ -97,6 +97,7 @@ set(LUV_TESTS
     audit_integrity
     backtest
     bars
+    best_execution_rts27
     cat_reporting
     chaos_feed
     clearing
@@ -124,6 +125,7 @@ set(LUV_TESTS
     lob_sanity
     locate
     margin
+    margin_call_watchdog
     market_access_15c3_5
     mbo
     mempool
@@ -146,6 +148,7 @@ set(LUV_TESTS
     sharding
     shutdown_controller
     sor_and_gateway
+    sor_sim
     span_margin
     stp_mmp
     strategy
