@@ -99,6 +99,7 @@ set(LUV_TESTS
     backtest
     bars
     best_execution_rts27
+    bond_analytics
     cat_reporting
     cds
     chaos_feed
@@ -144,6 +145,7 @@ set(LUV_TESTS
     options_settlement
     order_types
     ouch_parser
+    perps_fair_value
     perps_funding
     precision
     prometheus_export
@@ -153,6 +155,7 @@ set(LUV_TESTS
     reg_nms
     risk_engine
     risk_validator
+    rule_605
     rule_606
     sequence_tracker
     sharding
