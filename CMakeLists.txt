@@ -115,6 +115,7 @@ set(LUV_TESTS
     crash_recovery
     crash_recovery_process
     cross_asset_margin
+    customer_protection_15c3_3
     dark_pool
     day4_integration
     decoder_fuzz
@@ -149,6 +150,7 @@ set(LUV_TESTS
     mempool
     moldudp64_fixture
     multi_feed_and_compliance
+    nanosecond_replay
     net_capital_15c3_1
     net_ring
     options_settlement
@@ -179,6 +181,7 @@ set(LUV_TESTS
     sor_sim
     sor_smart_router
     span_margin
+    stat_arb_ou
     stp_mmp
     strategy
     strategy_sandbox
