@@ -106,6 +106,7 @@ set(LUV_TESTS
     collateral
     compliance_aml
     concurrency
+    corporate_actions
     crash_recovery
     crash_recovery_process
     dark_pool
@@ -118,6 +119,7 @@ set(LUV_TESTS
     etf_arb
     execution
     feed
+    financing
     fix_protocol
     form_pf
     fx_triangulation
@@ -147,6 +149,7 @@ set(LUV_TESTS
     reg_nms
     risk_engine
     risk_validator
+    rule_606
     sequence_tracker
     sharding
     shutdown_controller
