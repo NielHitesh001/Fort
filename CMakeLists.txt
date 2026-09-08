@@ -94,6 +94,7 @@ set(LUV_TESTS
     cat_reporting
     chaos_feed
     clock_sync
+    collar
     compliance_aml
     concurrency
     crash_recovery
@@ -105,8 +106,10 @@ set(LUV_TESTS
     execution
     feed
     fix_protocol
+    greeks
     lob
     lob_sanity
+    mbo
     moldudp64_fixture
     multi_feed_and_compliance
     order_types
