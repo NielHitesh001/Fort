@@ -110,12 +110,14 @@ set(LUV_TESTS
     decoder_fuzz
     determinism_fuzz
     diagnostics_and_multileg
+    disaster_recovery
     drop_copy
     execution
     feed
     fix_protocol
     fx_triangulation
     greeks
+    hw_watchdog
     lob
     lob_sanity
     locate
@@ -125,6 +127,7 @@ set(LUV_TESTS
     moldudp64_fixture
     multi_feed_and_compliance
     net_ring
+    options_settlement
     order_types
     ouch_parser
     precision
