@@ -99,6 +99,7 @@ set(LUV_TESTS
     clearing
     clock_sync
     collar
+    collateral
     compliance_aml
     concurrency
     crash_recovery
@@ -119,6 +120,7 @@ set(LUV_TESTS
     locate
     margin
     mbo
+    mempool
     moldudp64_fixture
     multi_feed_and_compliance
     net_ring
@@ -127,6 +129,7 @@ set(LUV_TESTS
     precision
     prometheus_export
     raft_sync
+    rebates
     reg_nms
     risk_engine
     risk_validator
