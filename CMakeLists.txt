@@ -96,6 +96,7 @@ set(LUV_TESTS
     crash_recovery_process
     day4_integration
     decoder_fuzz
+    diagnostics_and_multileg
     execution
     feed
     lob
