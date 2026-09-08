@@ -113,6 +113,7 @@ set(LUV_TESTS
     corporate_actions
     crash_recovery
     crash_recovery_process
+    cross_asset_margin
     dark_pool
     day4_integration
     decoder_fuzz
@@ -158,6 +159,7 @@ set(LUV_TESTS
     reg_nms
     risk_engine
     risk_validator
+    rule_13h
     rule_605
     rule_606
     sequence_tracker
@@ -175,6 +177,7 @@ set(LUV_TESTS
     tick_rule
     var
     vol_surface
+    vpin
     worm_audit
     xccy_swap
     yield_curve
