@@ -91,6 +91,7 @@ set(LUV_TESTS
     ai_telemetry
     algo_execution
     allocation
+    amm_liquidity
     arena
     as_mm
     ats_n
@@ -122,6 +123,7 @@ set(LUV_TESTS
     dtc_settlement
     etf_arb
     execution
+    factor_stress
     feed
     financing
     fix_protocol
@@ -152,6 +154,7 @@ set(LUV_TESTS
     raft_sync
     rebates
     reconciliation
+    reg_m
     reg_nms
     risk_engine
     risk_validator
