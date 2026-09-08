@@ -90,6 +90,7 @@ set(LUV_TESTS
     ai_telemetry
     algo_execution
     arena
+    as_mm
     auction
     audit_integrity
     cat_reporting
@@ -119,6 +120,7 @@ set(LUV_TESTS
     ouch_parser
     precision
     prometheus_export
+    reg_nms
     risk_engine
     risk_validator
     sequence_tracker
@@ -130,6 +132,7 @@ set(LUV_TESTS
     strategy_sandbox
     stress
     telemetry_export
+    var
 )
 
 if(NOT LUV_ENABLE_DPDK)
