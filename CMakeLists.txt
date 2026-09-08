@@ -100,6 +100,7 @@ set(LUV_TESTS
     bars
     best_execution_rts27
     cat_reporting
+    cds
     chaos_feed
     clearing
     clock_sync
@@ -124,6 +125,7 @@ set(LUV_TESTS
     financing
     fix_protocol
     form_pf
+    fx_forward
     fx_triangulation
     greeks
     hw_watchdog
@@ -167,6 +169,7 @@ set(LUV_TESTS
     tick_rule
     var
     vol_surface
+    worm_audit
     xccy_swap
     yield_curve
 )
