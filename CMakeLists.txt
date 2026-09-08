@@ -86,6 +86,7 @@ function(luv_add_test test_name)
 endfunction()
 
 set(LUV_TESTS
+    10b18
     advanced_circuit_breaker
     ai_telemetry
     algo_execution
@@ -116,6 +117,7 @@ set(LUV_TESTS
     diagnostics_and_multileg
     disaster_recovery
     drop_copy
+    dtc_settlement
     etf_arb
     execution
     feed
@@ -165,6 +167,7 @@ set(LUV_TESTS
     tick_rule
     var
     vol_surface
+    xccy_swap
     yield_curve
 )
 
