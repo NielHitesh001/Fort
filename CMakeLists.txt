@@ -170,6 +170,7 @@ set(LUV_TESTS
     margin_call_watchdog
     market_access_15c3_5
     mbo
+    memory_protection_guard
     mempool
     mifid_rts25_clock_sync
     moldudp64_fixture
@@ -188,6 +189,7 @@ set(LUV_TESTS
     perps_funding
     pnl_attribution
     precision
+    pre_trade_risk_security
     prometheus_export
     raft_sync
     rebates
@@ -212,6 +214,7 @@ set(LUV_TESTS
     sec_rule_17a5
     sec_rule_201_uptick
     sequence_tracker
+    session_security
     sharding
     shutdown_controller
     slippage_estimator
