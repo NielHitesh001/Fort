@@ -106,7 +106,9 @@ set(LUV_TESTS
     cat_reporting
     cds
     cftc_rule_575
+    cftc_swap_reporting
     chaos_feed
+    cip_forward_points
     clearing
     clock_sync
     collar
@@ -185,6 +187,7 @@ set(LUV_TESTS
     regime_switching_mm
     risk_engine
     risk_validator
+    roll_glosten_milgrom
     rts28
     rule_13h
     rule_605
