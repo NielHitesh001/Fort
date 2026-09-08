@@ -149,6 +149,7 @@ set(LUV_TESTS
     mempool
     moldudp64_fixture
     multi_feed_and_compliance
+    net_capital_15c3_1
     net_ring
     options_settlement
     order_peg
@@ -165,6 +166,7 @@ set(LUV_TESTS
     reg_m
     reg_nms
     reg_sho_204
+    regime_switching_mm
     risk_engine
     risk_validator
     rule_13h
@@ -175,6 +177,7 @@ set(LUV_TESTS
     shutdown_controller
     sor_and_gateway
     sor_sim
+    sor_smart_router
     span_margin
     stp_mmp
     strategy
