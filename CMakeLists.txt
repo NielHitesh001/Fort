@@ -92,6 +92,7 @@ set(LUV_TESTS
     allocation
     arena
     as_mm
+    ats_n
     auction
     audit_integrity
     backtest
@@ -132,6 +133,7 @@ set(LUV_TESTS
     options_settlement
     order_types
     ouch_parser
+    perps_funding
     precision
     prometheus_export
     raft_sync
@@ -144,6 +146,7 @@ set(LUV_TESTS
     sharding
     shutdown_controller
     sor_and_gateway
+    span_margin
     stp_mmp
     strategy
     strategy_sandbox
