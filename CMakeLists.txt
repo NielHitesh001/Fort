@@ -115,12 +115,15 @@ set(LUV_TESTS
     diagnostics_and_multileg
     disaster_recovery
     drop_copy
+    etf_arb
     execution
     feed
     fix_protocol
+    form_pf
     fx_triangulation
     greeks
     hw_watchdog
+    irs
     lob
     lob_sanity
     locate
