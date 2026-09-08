@@ -139,9 +139,11 @@ set(LUV_TESTS
     form_13f
     form_pf
     fx_forward
+    fx_triangular_arb
     fx_triangulation
     gamma_scalping
     greeks
+    gueant_tapia_manziadi
     hawkes_process
     hft_feature_pipeline
     hw_watchdog
@@ -187,6 +189,7 @@ set(LUV_TESTS
     rule_13h
     rule_605
     rule_606
+    sec_15c2_12
     sequence_tracker
     sharding
     shutdown_controller
