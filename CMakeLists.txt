@@ -88,14 +88,17 @@ endfunction()
 set(LUV_TESTS
     advanced_circuit_breaker
     ai_telemetry
+    algo_execution
     arena
     audit_integrity
+    cat_reporting
     chaos_feed
     clock_sync
     compliance_aml
     concurrency
     crash_recovery
     crash_recovery_process
+    dark_pool
     day4_integration
     decoder_fuzz
     diagnostics_and_multileg
