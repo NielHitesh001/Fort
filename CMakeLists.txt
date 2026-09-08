@@ -102,6 +102,7 @@ set(LUV_TESTS
     audit_integrity
     backtest
     bars
+    bates_pricer
     best_execution_rts27
     bond_analytics
     cartea_jaimungal
@@ -134,6 +135,7 @@ set(LUV_TESTS
     drop_copy
     dtc_settlement
     ema_fractal_filter
+    esma_mar_surveillance
     etf_arb
     execution
     extreme_value_volatility
@@ -203,6 +205,7 @@ set(LUV_TESTS
     sec_form_nport
     sec_form_pf_leverage
     sec_rule_144
+    sec_rule_17a5
     sec_rule_201_uptick
     sequence_tracker
     sharding
