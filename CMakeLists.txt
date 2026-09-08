@@ -109,6 +109,7 @@ set(LUV_TESTS
     cds
     cftc_rule_575
     cftc_swap_reporting
+    chande_momentum
     chaos_feed
     cip_forward_points
     clearing
@@ -202,6 +203,7 @@ set(LUV_TESTS
     sec_form_nport
     sec_form_pf_leverage
     sec_rule_144
+    sec_rule_201_uptick
     sequence_tracker
     sharding
     shutdown_controller
@@ -222,6 +224,7 @@ set(LUV_TESTS
     variance_swap
     vol_surface
     vpin
+    vwap_twap_execution
     worm_audit
     xccy_swap
     yield_curve
