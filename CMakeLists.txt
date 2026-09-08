@@ -93,8 +93,10 @@ set(LUV_TESTS
     as_mm
     auction
     audit_integrity
+    bars
     cat_reporting
     chaos_feed
+    clearing
     clock_sync
     collar
     compliance_aml
@@ -133,6 +135,7 @@ set(LUV_TESTS
     strategy
     strategy_sandbox
     stress
+    surveillance
     telemetry_export
     tick_rule
     var
