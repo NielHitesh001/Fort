@@ -134,9 +134,11 @@ set(LUV_TESTS
     greeks
     hw_watchdog
     irs
+    iv_solver
     lob
     lob_sanity
     locate
+    luld
     margin
     margin_call_watchdog
     market_access_15c3_5
@@ -146,6 +148,7 @@ set(LUV_TESTS
     multi_feed_and_compliance
     net_ring
     options_settlement
+    order_peg
     order_types
     ouch_parser
     perps_fair_value
