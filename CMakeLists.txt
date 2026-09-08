@@ -171,6 +171,7 @@ set(LUV_TESTS
     market_access_15c3_5
     mbo
     mempool
+    mifid_rts25_clock_sync
     moldudp64_fixture
     multi_feed_and_compliance
     nanosecond_replay
@@ -197,6 +198,7 @@ set(LUV_TESTS
     risk_engine
     risk_validator
     roll_glosten_milgrom
+    rough_bergomi_pricer
     rts28
     rule_13h
     rule_605
@@ -205,6 +207,7 @@ set(LUV_TESTS
     sec_form_nport
     sec_form_pf_leverage
     sec_rule_144
+    sec_rule_17a4_records
     sec_rule_17a5
     sec_rule_201_uptick
     sequence_tracker
