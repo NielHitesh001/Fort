@@ -89,6 +89,7 @@ set(LUV_TESTS
     advanced_circuit_breaker
     ai_telemetry
     algo_execution
+    allocation
     arena
     as_mm
     auction
@@ -122,6 +123,7 @@ set(LUV_TESTS
     lob_sanity
     locate
     margin
+    market_access_15c3_5
     mbo
     mempool
     moldudp64_fixture
@@ -150,6 +152,7 @@ set(LUV_TESTS
     telemetry_export
     tick_rule
     var
+    vol_surface
     yield_curve
 )
 
