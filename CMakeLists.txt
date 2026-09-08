@@ -128,10 +128,12 @@ set(LUV_TESTS
     feed
     financing
     fix_protocol
+    form_13f
     form_pf
     fx_forward
     fx_triangulation
     greeks
+    hft_feature_pipeline
     hw_watchdog
     irs
     iv_solver
