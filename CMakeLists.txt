@@ -174,6 +174,7 @@ set(LUV_TESTS
     mifid_rts25_clock_sync
     moldudp64_fixture
     multi_feed_and_compliance
+    multiregion_raft_cluster
     nanosecond_replay
     net_capital_15c3_1
     net_ring
@@ -226,6 +227,7 @@ set(LUV_TESTS
     surveillance
     telemetry_export
     tick_rule
+    tree_feature_pipeline
     var
     variance_swap
     vol_surface
