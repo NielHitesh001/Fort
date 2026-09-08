@@ -104,6 +104,7 @@ set(LUV_TESTS
     bars
     best_execution_rts27
     bond_analytics
+    cartea_jaimungal
     cat_reporting
     cds
     cftc_rule_575
@@ -131,6 +132,7 @@ set(LUV_TESTS
     disaster_recovery
     drop_copy
     dtc_settlement
+    ema_fractal_filter
     etf_arb
     execution
     extreme_value_volatility
@@ -199,6 +201,7 @@ set(LUV_TESTS
     sec_15c2_12
     sec_form_nport
     sec_form_pf_leverage
+    sec_rule_144
     sequence_tracker
     sharding
     shutdown_controller
