@@ -112,6 +112,7 @@ set(LUV_TESTS
     greeks
     lob
     lob_sanity
+    margin
     mbo
     moldudp64_fixture
     multi_feed_and_compliance
@@ -120,6 +121,7 @@ set(LUV_TESTS
     ouch_parser
     precision
     prometheus_export
+    raft_sync
     reg_nms
     risk_engine
     risk_validator
@@ -132,6 +134,7 @@ set(LUV_TESTS
     strategy_sandbox
     stress
     telemetry_export
+    tick_rule
     var
 )
 
