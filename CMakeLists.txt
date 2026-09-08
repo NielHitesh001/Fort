@@ -132,6 +132,7 @@ set(LUV_TESTS
     dtc_settlement
     etf_arb
     execution
+    extreme_value_volatility
     factor_stress
     fast_decoder
     feed
@@ -153,6 +154,7 @@ set(LUV_TESTS
     isda_simm
     iv_solver
     kyles_lambda
+    lead_lag_cross_correlation
     lob
     lob_sanity
     locate
@@ -193,6 +195,7 @@ set(LUV_TESTS
     rule_605
     rule_606
     sec_15c2_12
+    sec_form_nport
     sequence_tracker
     sharding
     shutdown_controller
