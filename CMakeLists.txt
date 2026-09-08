@@ -110,6 +110,7 @@ set(LUV_TESTS
     collateral
     compliance_aml
     concurrency
+    contingent_orders
     corporate_actions
     crash_recovery
     crash_recovery_process
@@ -155,6 +156,7 @@ set(LUV_TESTS
     ouch_parser
     perps_fair_value
     perps_funding
+    pnl_attribution
     precision
     prometheus_export
     raft_sync
@@ -162,6 +164,7 @@ set(LUV_TESTS
     reconciliation
     reg_m
     reg_nms
+    reg_sho_204
     risk_engine
     risk_validator
     rule_13h
