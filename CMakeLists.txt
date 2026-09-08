@@ -93,6 +93,7 @@ set(LUV_TESTS
     algo_execution
     allocation
     almgren_chriss
+    amihud_pastor_stambaugh
     amm_liquidity
     arena
     as_mm
@@ -148,6 +149,7 @@ set(LUV_TESTS
     greeks
     gueant_tapia_manziadi
     hawkes_process
+    heston_pricer
     hft_feature_pipeline
     hw_watchdog
     irs
@@ -196,6 +198,7 @@ set(LUV_TESTS
     rule_606
     sec_15c2_12
     sec_form_nport
+    sec_form_pf_leverage
     sequence_tracker
     sharding
     shutdown_controller
