@@ -142,6 +142,7 @@ set(LUV_TESTS
     hw_watchdog
     irs
     iv_solver
+    kyles_lambda
     lob
     lob_sanity
     locate
@@ -159,6 +160,7 @@ set(LUV_TESTS
     options_settlement
     order_peg
     order_types
+    otc_15c2_11
     ouch_parser
     perps_fair_value
     perps_funding
@@ -180,6 +182,7 @@ set(LUV_TESTS
     sequence_tracker
     sharding
     shutdown_controller
+    slippage_estimator
     sor_and_gateway
     sor_sim
     sor_smart_router
