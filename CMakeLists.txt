@@ -91,6 +91,7 @@ set(LUV_TESTS
     ai_telemetry
     algo_execution
     allocation
+    almgren_chriss
     amm_liquidity
     arena
     as_mm
@@ -127,8 +128,10 @@ set(LUV_TESTS
     etf_arb
     execution
     factor_stress
+    fast_decoder
     feed
     financing
+    finra_4210
     fix_protocol
     form_13f
     form_pf
