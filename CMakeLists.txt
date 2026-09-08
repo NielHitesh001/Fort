@@ -106,7 +106,9 @@ set(LUV_TESTS
     dark_pool
     day4_integration
     decoder_fuzz
+    determinism_fuzz
     diagnostics_and_multileg
+    drop_copy
     execution
     feed
     fix_protocol
@@ -114,6 +116,7 @@ set(LUV_TESTS
     greeks
     lob
     lob_sanity
+    locate
     margin
     mbo
     moldudp64_fixture
