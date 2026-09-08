@@ -90,6 +90,7 @@ set(LUV_TESTS
     ai_telemetry
     algo_execution
     arena
+    auction
     audit_integrity
     cat_reporting
     chaos_feed
@@ -106,12 +107,14 @@ set(LUV_TESTS
     execution
     feed
     fix_protocol
+    fx_triangulation
     greeks
     lob
     lob_sanity
     mbo
     moldudp64_fixture
     multi_feed_and_compliance
+    net_ring
     order_types
     ouch_parser
     precision
