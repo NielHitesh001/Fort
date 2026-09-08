@@ -146,6 +146,7 @@ set(LUV_TESTS
     hft_feature_pipeline
     hw_watchdog
     irs
+    isda_simm
     iv_solver
     kyles_lambda
     lob
@@ -163,6 +164,7 @@ set(LUV_TESTS
     net_capital_15c3_1
     net_ring
     options_settlement
+    order_flow_imbalance
     order_peg
     order_types
     otc_15c2_11
@@ -181,6 +183,7 @@ set(LUV_TESTS
     regime_switching_mm
     risk_engine
     risk_validator
+    rts28
     rule_13h
     rule_605
     rule_606
