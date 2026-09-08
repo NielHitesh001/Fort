@@ -87,6 +87,7 @@ endfunction()
 
 set(LUV_TESTS
     10b18
+    10b5_1_plan
     advanced_circuit_breaker
     ai_telemetry
     algo_execution
@@ -117,6 +118,7 @@ set(LUV_TESTS
     crash_recovery
     crash_recovery_process
     cross_asset_margin
+    crypto_basis_arbitrage
     customer_protection_15c3_3
     dark_pool
     day4_integration
@@ -140,6 +142,7 @@ set(LUV_TESTS
     fx_triangulation
     gamma_scalping
     greeks
+    hawkes_process
     hft_feature_pipeline
     hw_watchdog
     irs
