@@ -93,6 +93,7 @@ set(LUV_TESTS
     as_mm
     auction
     audit_integrity
+    backtest
     bars
     cat_reporting
     chaos_feed
@@ -130,6 +131,7 @@ set(LUV_TESTS
     prometheus_export
     raft_sync
     rebates
+    reconciliation
     reg_nms
     risk_engine
     risk_validator
@@ -145,6 +147,7 @@ set(LUV_TESTS
     telemetry_export
     tick_rule
     var
+    yield_curve
 )
 
 if(NOT LUV_ENABLE_DPDK)
