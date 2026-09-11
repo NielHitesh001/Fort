@@ -165,6 +165,7 @@ set(LUV_TESTS
     lob
     lob_sanity
     locate
+    logging
     luld
     margin
     margin_call_watchdog
@@ -177,6 +178,7 @@ set(LUV_TESTS
     multi_feed_and_compliance
     multiregion_raft_cluster
     nanosecond_replay
+    numeric_limits
     net_capital_15c3_1
     net_ring
     options_settlement
@@ -273,3 +275,7 @@ else()
     set_tests_properties(stress PROPERTIES
         PASS_REGULAR_EXPRESSION "Stress test passed\\.")
 endif()
+# Performance Stress Benchmark
+add_executable(luv_perf_stress test_stress.cpp)
+target_link_libraries(luv_perf_stress PRIVATE luv_core Threads::Threads)
+target_compile_options(luv_perf_stress PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)

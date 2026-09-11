@@ -15,11 +15,26 @@ int main() {
     limits.max_order_qty = 1'000;
     limits.max_abs_position = 2'000;
     limits.max_alpha_age_ns = 1'000'000;
-    risk.set_limits(3, limits);
+    assert(risk.set_limits(3, limits));
+
+    luv::exec::RiskLimits invalid_limits = limits;
+    invalid_limits.max_order_qty = 0;
+    assert(!risk.set_limits(3, invalid_limits));
+    invalid_limits = limits;
+    invalid_limits.max_price = invalid_limits.min_price - 1;
+    assert(!risk.set_limits(3, invalid_limits));
 
     luv::exec::OrderIntent invalid{};
     invalid.symbol_idx = luv::Config::kSymbols;
     assert(risk.evaluate(invalid).pass == 0);
+
+    luv::exec::OrderIntent reversed_timestamp{};
+    reversed_timestamp.symbol_idx = 3;
+    reversed_timestamp.qty = 1;
+    reversed_timestamp.price = 1;
+    reversed_timestamp.alpha_timestamp_ns = 2;
+    reversed_timestamp.now_ns = 1;
+    assert(risk.evaluate(reversed_timestamp).pass == 0);
 
     std::mt19937_64 rng(0xD1CE);
     for (uint32_t iteration = 0; iteration < 50'000; ++iteration) {

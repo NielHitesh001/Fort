@@ -54,6 +54,11 @@ void test_lob_reconstruction(luv::Arena& arena) {
     assert(lob.bid_depth_qty(sym, 1) == 100);
     assert(arena.level(sym, 0, 0).order_count == 1);
 
+    const uint64_t rejected_before = lob.rejected_events();
+    lob.process(tick('A', sym, 99, -1, px100, luv::tick_flags::kBuy));
+    lob.process(tick('?', sym, 99, 1, px100));
+    assert(lob.rejected_events() == rejected_before + 2);
+
     lob.process(tick('A', sym, 2, 50, px101, luv::tick_flags::kBuy));
     assert(lob.best_bid_price(sym) == px101);
     assert(lob.bid_level_count(sym) == 2);
@@ -102,6 +107,12 @@ void test_consumer_and_features() {
     assert(consumer.init(arena));
 
     constexpr uint16_t sym = 1;
+    push(arena, tick('A', luv::Config::kSymbols, 9, 100, 2'000'000,
+                     luv::tick_flags::kBuy));
+    assert(consumer.process_one());
+    assert(consumer.rejected_ticks() == 1);
+    assert(consumer.ticks_processed() == 0);
+
     push(arena, tick('A', sym, 10, 100, 2'000'000, luv::tick_flags::kBuy));
     push(arena, tick('A', sym, 11, 100, 2'020'000, 0));
     push(arena, tick('P', sym, 0, 25, 2'010'000,

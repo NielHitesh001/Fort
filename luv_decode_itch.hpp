@@ -23,6 +23,8 @@
 #include <cstring>
 
 #include "luv_arena.hpp"
+#include "luv_logging.hpp"
+#include "luv_numeric_limits.hpp"
 
 namespace luv {
 
@@ -240,6 +242,23 @@ namespace itch {
     inline constexpr size_t kLenCrossTrade         = 40;
     inline constexpr size_t kLenStockTradingAction = 25;
     inline constexpr size_t kLenRegSHO             = 20;
+
+    [[nodiscard]] constexpr size_t minimum_length(uint8_t type) noexcept {
+        switch (type) {
+        case kAddOrder: return kLenAddOrder;
+        case kAddOrderMPID: return kLenAddOrderMPID;
+        case kOrderExecuted: return kLenOrderExecuted;
+        case kOrderExecPrice: return kLenOrderExecPrice;
+        case kOrderCancel: return kLenOrderCancel;
+        case kOrderDelete: return kLenOrderDelete;
+        case kOrderReplace: return kLenOrderReplace;
+        case kTrade: return kLenTrade;
+        case kCrossTrade: return kLenCrossTrade;
+        case kStockTradingAction: return kLenStockTradingAction;
+        case kRegSHO: return kLenRegSHO;
+        default: return 0;
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,11 +288,25 @@ namespace itch {
     const SymbolTable& symbols,
     TickMsg&          out) noexcept
 {
-    if (!raw) [[unlikely]] return false;
+    if (!raw) [[unlikely]] {
+        StructuredLogger::log(LogLevel::kError, "decode", "null_input");
+        return false;
+    }
     // ── Minimum length check (common header = 11 bytes) ──────────────────
-    if (len < 11) [[unlikely]] return false;
+    if (len < 11) [[unlikely]] {
+        StructuredLogger::log(LogLevel::kError, "decode", "message_too_short",
+                              static_cast<int64_t>(len), 11);
+        return false;
+    }
 
     const uint8_t msg_type = raw[0];
+    const size_t minimum_length = itch::minimum_length(msg_type);
+    if (minimum_length != 0 && len < minimum_length) [[unlikely]] {
+        StructuredLogger::log(LogLevel::kError, "decode", "message_too_short",
+                              static_cast<int64_t>(len),
+                              static_cast<int64_t>(minimum_length));
+        return false;
+    }
 
     // ── Parse common header fields ───────────────────────────────────────
     //
@@ -317,8 +350,9 @@ namespace itch {
         // Resolve symbol from the 8-byte stock ticker at offset 24
         const uint16_t sym_idx = symbols.lookup(raw + 24);
         if (sym_idx == SymbolTable::kNotFound) [[unlikely]] return false;
-        if (detail::be64(raw + 11) == 0 || detail::be32(raw + 20) == 0 ||
-            detail::be32(raw + 32) == 0 ||
+        if (detail::be64(raw + 11) == 0 ||
+            !numeric::is_valid_quantity(detail::be32(raw + 20)) ||
+            !numeric::is_valid_price(detail::be32(raw + 32)) ||
             (raw[19] != 'B' && raw[19] != 'S')) [[unlikely]] return false;
 
         out.symbol_idx = sym_idx;
@@ -346,7 +380,7 @@ namespace itch {
         // No stock field — use Stock Locate as symbol_idx
         out.symbol_idx = detail::be16(raw + 1);
         if (out.symbol_idx >= Config::kSymbols || detail::be64(raw + 11) == 0 ||
-            detail::be32(raw + 19) == 0) [[unlikely]] return false;
+            !numeric::is_valid_quantity(detail::be32(raw + 19))) [[unlikely]] return false;
         out.order_ref  = detail::be64(raw + 11);
         out.qty        = static_cast<int64_t>(detail::be32(raw + 19));
         out.match_num  = detail::be64(raw + 23);
@@ -372,7 +406,8 @@ namespace itch {
 
         out.symbol_idx = detail::be16(raw + 1);
         if (out.symbol_idx >= Config::kSymbols || detail::be64(raw + 11) == 0 ||
-            detail::be32(raw + 19) == 0 || detail::be32(raw + 32) == 0 ||
+            !numeric::is_valid_quantity(detail::be32(raw + 19)) ||
+            !numeric::is_valid_price(detail::be32(raw + 32)) ||
             (raw[31] != 'Y' && raw[31] != 'N')) [[unlikely]] return false;
         out.order_ref  = detail::be64(raw + 11);
         out.qty        = static_cast<int64_t>(detail::be32(raw + 19));
@@ -398,7 +433,7 @@ namespace itch {
 
         out.symbol_idx = detail::be16(raw + 1);
         if (out.symbol_idx >= Config::kSymbols || detail::be64(raw + 11) == 0 ||
-            detail::be32(raw + 19) == 0) [[unlikely]] return false;
+            !numeric::is_valid_quantity(detail::be32(raw + 19))) [[unlikely]] return false;
         out.order_ref  = detail::be64(raw + 11);
         out.qty        = static_cast<int64_t>(detail::be32(raw + 19));
         return true;
@@ -445,7 +480,8 @@ namespace itch {
         if (out.symbol_idx >= Config::kSymbols || detail::be64(raw + 11) == 0 ||
             detail::be64(raw + 19) == 0 ||
             detail::be64(raw + 11) == detail::be64(raw + 19) ||
-            detail::be32(raw + 27) == 0 || detail::be32(raw + 31) == 0)
+            !numeric::is_valid_quantity(detail::be32(raw + 27)) ||
+            !numeric::is_valid_price(detail::be32(raw + 31)))
             [[unlikely]] return false;
         out.order_ref  = detail::be64(raw + 11);  // original ref
         out.match_num  = detail::be64(raw + 19);  // new ref (packed here)
@@ -473,7 +509,10 @@ namespace itch {
 
         // Resolve symbol from the 8-byte stock ticker at offset 24
         const uint16_t sym_idx = symbols.lookup(raw + 24);
-        if (sym_idx == SymbolTable::kNotFound) [[unlikely]] return false;
+        if (sym_idx == SymbolTable::kNotFound ||
+            !numeric::is_valid_quantity(detail::be32(raw + 20)) ||
+            !numeric::is_valid_price(detail::be32(raw + 32)) ||
+            (raw[19] != 'B' && raw[19] != 'S')) [[unlikely]] return false;
 
         out.symbol_idx = sym_idx;
         out.order_ref  = detail::be64(raw + 11);
@@ -491,10 +530,13 @@ namespace itch {
     case itch::kCrossTrade: {
         if (len < itch::kLenCrossTrade) [[unlikely]] return false;
         const uint16_t sym_idx = symbols.lookup(raw + 19);
-        if (sym_idx == SymbolTable::kNotFound) [[unlikely]] return false;
+        const uint64_t shares = detail::be64(raw + 11);
+        if (sym_idx == SymbolTable::kNotFound ||
+            shares > static_cast<uint64_t>(numeric::kMaxQuantity) ||
+            !numeric::is_valid_price(detail::be32(raw + 27))) [[unlikely]] return false;
 
         out.symbol_idx = sym_idx;
-        out.qty        = static_cast<int64_t>(detail::be64(raw + 11));
+        out.qty        = static_cast<int64_t>(shares);
         out.price      = static_cast<int64_t>(detail::be32(raw + 27));
         out.match_num  = detail::be64(raw + 31);
         out.flags      = tick_flags::kPrintable | tick_flags::kCross;

@@ -15,6 +15,7 @@
 > - ✗ **NOT PRODUCTION-READY FOR LIVE CAPITAL**: It does not connect to live exchange execution gateways (OUCH/FIX) or manage real financial capital.
 > - ✗ **NOT A REGULATED BROKER-DEALER OR TRADING VENUE**: It does not perform live customer KYC/AML identification, FinCEN SAR filing, physical clearinghouse settlement (T+1/T+2), or custodial banking.
 > - ✗ **SIMULATION ONLY**: Mathematical regulatory capital models (e.g. SEC Rule 15c3-1, 15c3-3, 17a-4/5) and quantitative pricing models are implementations for research, simulation, and academic study.
+> - ✗ **AUDIT LOG IS NOT REGULATORY RECORDKEEPING**: `luv_safety.hpp` provides local hash-chain integrity checks only. It is not WORM storage and does not satisfy SEC Rule 17a-4, FINRA, or CAT retention/custody requirements.
 >
 > Deploying software with live financial capital requires licensed market data infrastructure, clearing memberships, certified legal/regulatory compliance programs, and independent external auditing.
 >
@@ -90,6 +91,8 @@ In local in-memory simulation benchmarks on modern multi-core processors:
 - [**docs/EXAMPLES.md**](docs/EXAMPLES.md) - Compilable code examples and tutorial walkthroughs.
 - [**docs/BENCHMARKING.md**](docs/BENCHMARKING.md) - Microbenchmark methodology and latency analysis.
 - [**docs/AUDIT_LOGGING.md**](docs/AUDIT_LOGGING.md) - Audit trail architecture and compliance standards.
+- [**docs/COMPLIANCE_STATUS.md**](docs/COMPLIANCE_STATUS.md) - Simulation scope and regulatory-status matrix.
+- [**docs/TROUBLESHOOTING.md**](docs/TROUBLESHOOTING.md) - Structured failure events and operator responses.
 - [**BUILDING.md**](BUILDING.md) - Compilation instructions and sanitizer testing.
 - [**SECURITY.md**](SECURITY.md) - Security policy, threat model, and memory safety guarantees.
 - [**ROADMAP.md**](ROADMAP.md) - Future research and architectural roadmap.

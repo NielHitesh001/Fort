@@ -44,6 +44,27 @@ int main() {
     ::unlink(path);
     ::unlink(manifest_path);
 
+    // A hash chain validates the history it receives. Without an independently
+    // retained checkpoint, removing the final complete record is undetectable;
+    // this is intentionally documented as a simulation-only limitation.
+    const char* truncated_path = "/tmp/luv-audit-truncation-test.bin";
+    ::unlink(truncated_path);
+    {
+        luv::DurableAuditLog log;
+        assert(log.open(truncated_path, 1));
+        assert(log.append(100, 10, 1'000'000, 10, 3, 0, 'A'));
+        assert(log.append(200, 11, 1'010'000, 5, 3, 1, 'A'));
+        assert(log.append(300, 12, 1'020'000, 8, 3, 0, 'U'));
+    }
+    fd = ::open(truncated_path, O_RDWR);
+    assert(fd >= 0);
+    assert(::ftruncate(fd, 2 * static_cast<off_t>(sizeof(luv::AuditEvent))) == 0);
+    ::close(fd);
+    uint64_t valid_events = 0;
+    assert(luv::DurableAuditLog::verify_log_integrity(truncated_path, valid_events));
+    assert(valid_events == 2);
+    ::unlink(truncated_path);
+
     std::printf("audit integrity passed: chain corruption rejected and manifest verified\n");
     return 0;
 }

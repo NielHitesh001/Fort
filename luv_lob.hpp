@@ -27,6 +27,8 @@
 
 #include "luv_arena.hpp"
 #include "luv_decode_itch.hpp"
+#include "luv_logging.hpp"
+#include "luv_numeric_limits.hpp"
 
 namespace luv {
 
@@ -71,6 +73,13 @@ public:
     static_assert((kCapacity & (kCapacity - 1)) == 0,
                   "OrderRefMap capacity must be power of two");
     static constexpr uint32_t kMask = kCapacity - 1;
+    // Keep lookups bounded even when a malformed feed deliberately creates
+    // colliding references. A rejected event is recoverable and observable;
+    // an unbounded multi-million-slot scan is neither.
+    static constexpr uint32_t kMaxProbeLength = 256;
+    static constexpr uint32_t kMaxLoadPercent = 80;
+    static constexpr uint32_t kMaxEntries =
+        (kCapacity * kMaxLoadPercent) / 100;
 
     // Sentinel values
     static constexpr uint64_t kEmptyKey   = 0;         // order_ref 0 is never valid
@@ -135,31 +144,79 @@ public:
     //  Returns true on success.  The table is sized to the physical maximum
     //  number of orders that can be represented in the LOB slab.
     bool insert(uint64_t order_ref, const OrderLocation& loc) noexcept {
-        if (order_ref == kEmptyKey || order_ref == kTombstone ||
+        if (!_keys || order_ref == kEmptyKey || order_ref == kTombstone ||
             loc.symbol_idx >= Config::kSymbols || loc.side > 1 ||
             loc.level_idx >= Config::kLevelsPerSide || loc.slot_idx < 0 ||
-            loc.slot_idx >= static_cast<int32_t>(Config::kMaxOrdersPerLevel))
+            loc.slot_idx >= static_cast<int32_t>(Config::kMaxOrdersPerLevel)) {
+            StructuredLogger::log(LogLevel::kError, "lob", "invalid_order_location",
+                                  static_cast<int64_t>(order_ref));
             return false;
+        }
         uint32_t slot = hash(order_ref);
 
+        uint32_t tombstone_slot = kCapacity;
         // Probe for an existing entry or an empty/tombstone slot.
-        for (uint32_t probed = 0; probed < kCapacity; ++probed) {
+        for (uint32_t probed = 0; probed < kMaxProbeLength; ++probed) {
             const uint64_t k = _keys[slot];
             if (k == order_ref) {
                 // Update existing entry
                 _values[slot] = loc;
                 return true;
             }
-            if (k == kEmptyKey || k == kTombstone) {
+            if (k == kTombstone && tombstone_slot == kCapacity) {
+                tombstone_slot = slot;
+            } else if (k == kEmptyKey) {
+                if (_count >= kMaxEntries) {
+                    StructuredLogger::log(LogLevel::kWarn, "lob", "hash_table_high_load",
+                                          _count, kMaxEntries);
+                    return false;
+                }
                 // Insert into free slot
-                _keys[slot]   = order_ref;
-                _values[slot] = loc;
+                const uint32_t destination =
+                    (tombstone_slot == kCapacity) ? slot : tombstone_slot;
+                _keys[destination]   = order_ref;
+                _values[destination] = loc;
                 ++_count;
                 return true;
             }
             slot = (slot + 1) & kMask;
         }
 
+        if (tombstone_slot != kCapacity && _count < kMaxEntries) {
+            _keys[tombstone_slot] = order_ref;
+            _values[tombstone_slot] = loc;
+            ++_count;
+            return true;
+        }
+        StructuredLogger::log(LogLevel::kError, "lob", "hash_table_probe_limit",
+                              static_cast<int64_t>(order_ref), kMaxProbeLength);
+        return false;
+    }
+
+    // Pre-flight a new insertion before mutating another data structure.
+    // This is used by replace, whose original order must remain intact if the
+    // replacement cannot be represented safely.
+    [[nodiscard]] bool can_insert(uint64_t order_ref) const noexcept {
+        if (!_keys || order_ref == kEmptyKey || order_ref == kTombstone)
+            return false;
+        if (_count >= kMaxEntries) {
+            StructuredLogger::log(LogLevel::kWarn, "lob", "hash_table_high_load",
+                                  _count, kMaxEntries);
+            return false;
+        }
+        uint32_t slot = hash(order_ref);
+        for (uint32_t probed = 0; probed < kMaxProbeLength; ++probed) {
+            const uint64_t k = _keys[slot];
+            if (k == order_ref) {
+                StructuredLogger::log(LogLevel::kWarn, "lob", "duplicate_order_ref",
+                                      static_cast<int64_t>(order_ref));
+                return false;
+            }
+            if (k == kEmptyKey) return true;
+            slot = (slot + 1) & kMask;
+        }
+        StructuredLogger::log(LogLevel::kError, "lob", "hash_table_probe_limit",
+                              static_cast<int64_t>(order_ref), kMaxProbeLength);
         return false;
     }
 
@@ -167,9 +224,11 @@ public:
     //  Returns pointer to the OrderLocation if found, nullptr if not.
     //  The returned pointer is stable until the next insert/remove/clear.
     [[nodiscard]] OrderLocation* lookup(uint64_t order_ref) noexcept {
+        if (!_keys || order_ref == kEmptyKey || order_ref == kTombstone)
+            return nullptr;
         uint32_t slot = hash(order_ref);
 
-        for (uint32_t probed = 0; probed < kCapacity; ++probed) {
+        for (uint32_t probed = 0; probed < kMaxProbeLength; ++probed) {
             const uint64_t k = _keys[slot];
             if (k == order_ref)  return &_values[slot];
             if (k == kEmptyKey)  return nullptr;  // not found
@@ -186,9 +245,11 @@ public:
     // ── Remove ────────────────────────────────────────────────────────────
     //  Marks the slot as a tombstone so probe chains remain intact.
     void remove(uint64_t order_ref) noexcept {
+        if (!_keys || order_ref == kEmptyKey || order_ref == kTombstone)
+            return;
         uint32_t slot = hash(order_ref);
 
-        for (uint32_t probed = 0; probed < kCapacity; ++probed) {
+        for (uint32_t probed = 0; probed < kMaxProbeLength; ++probed) {
             const uint64_t k = _keys[slot];
             if (k == order_ref) {
                 _keys[slot] = kTombstone;
@@ -201,6 +262,9 @@ public:
     }
 
     [[nodiscard]] uint32_t size() const noexcept { return _count; }
+    [[nodiscard]] static constexpr uint32_t max_entries() noexcept {
+        return kMaxEntries;
+    }
 
     // ── Bulk update: fix level_idx for all orders on shifted levels ──────
     //  After inserting or removing a price level, the level_idx values for
@@ -319,9 +383,8 @@ public:
 
     // ── Main dispatch ────────────────────────────────────────────────────
 
-    /// Process a single decoded TickMsg.  Dispatches to the appropriate
-    /// handler based on msg_type.  Messages for unknown types are silently
-    /// ignored.
+    /// Process a single decoded TickMsg. Invalid and unsupported messages are
+    /// counted so feed corruption is visible to the caller.
     void process(const TickMsg& tick) noexcept {
         std::unique_lock<std::shared_mutex> lock(_mutex);
         process_unlocked(tick);
@@ -340,34 +403,54 @@ public:
         switch (tick.msg_type) {
         case itch::kAddOrder:       // 'A' — Add Order (no MPID)
         case itch::kAddOrderMPID:   // 'F' — Add Order (with MPID)
-            if (tick.order_ref == 0 || tick.qty <= 0 || tick.price <= 0) return;
+            if (tick.order_ref == 0 || !numeric::is_valid_quantity(tick.qty) ||
+                !numeric::is_valid_price(tick.price)) {
+                ++_stat_rejected;
+                return;
+            }
             on_add_order(tick);
             break;
         case itch::kOrderExecuted:  // 'E' — Order Executed
         case itch::kOrderExecPrice: // 'C' — Order Executed w/ Price
-            if (tick.order_ref == 0 || tick.qty <= 0) return;
+            if (tick.order_ref == 0 || !numeric::is_valid_quantity(tick.qty)) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_executed(tick);
             break;
         case itch::kOrderCancel:    // 'X' — Order Cancel
-            if (tick.order_ref == 0 || tick.qty <= 0) return;
+            if (tick.order_ref == 0 || !numeric::is_valid_quantity(tick.qty)) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_cancel(tick);
             break;
         case itch::kOrderDelete:    // 'D' — Order Delete
-            if (tick.order_ref == 0) return;
+            if (tick.order_ref == 0) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_delete(tick);
             break;
         case itch::kOrderReplace:   // 'U' — Order Replace
             if (tick.order_ref == 0 || tick.match_num == 0 ||
-                tick.order_ref == tick.match_num || tick.qty <= 0 ||
-                tick.price <= 0) return;
+                tick.order_ref == tick.match_num || !numeric::is_valid_quantity(tick.qty) ||
+                !numeric::is_valid_price(tick.price)) {
+                ++_stat_rejected;
+                return;
+            }
             on_order_replace(tick);
             break;
         case itch::kTrade:          // 'P' — Trade (non-cross)
-            if (tick.qty <= 0 || tick.price <= 0) return;
+            if (!numeric::is_valid_quantity(tick.qty) || !numeric::is_valid_price(tick.price)) {
+                ++_stat_rejected;
+                return;
+            }
             on_trade(tick);
             break;
         default:
-            break;  // silently ignore unhandled message types
+            ++_stat_rejected;
+            break;
         }
     }
 
@@ -485,6 +568,10 @@ public:
 
     [[nodiscard]] static constexpr uint32_t order_ref_map_capacity() noexcept {
         return OrderRefMap::kCapacity;
+    }
+
+    [[nodiscard]] static constexpr uint32_t order_ref_map_max_entries() noexcept {
+        return OrderRefMap::max_entries();
     }
 
 private:
@@ -700,7 +787,10 @@ private:
     void on_add_order(const TickMsg& tick) noexcept {
         ++_stat_adds;
 
-        if (_order_map.lookup(tick.order_ref)) [[unlikely]] return;
+        if (_order_map.lookup(tick.order_ref)) [[unlikely]] {
+            ++_stat_rejected;
+            return;
+        }
 
         const uint16_t sym  = tick.symbol_idx;
         const uint8_t  side = (tick.flags & tick_flags::kBuy) ? 0 : 1;  // 0=bid, 1=ask
@@ -710,14 +800,20 @@ private:
         int32_t lvl_idx = find_level(sym, side, price);
         if (lvl_idx < 0) {
             lvl_idx = insert_level_impl(sym, side, price);
-            if (lvl_idx < 0) [[unlikely]] return;  // max depth reached
+            if (lvl_idx < 0) [[unlikely]] {  // max depth reached
+                ++_stat_rejected;
+                return;
+            }
         }
 
         PriceLevel& lvl = _arena->level(sym, side, static_cast<uint32_t>(lvl_idx));
 
         // Allocate a slot
         const int32_t slot_idx = lvl.alloc_slot();
-        if (slot_idx < 0) [[unlikely]] return;  // level full
+        if (slot_idx < 0) [[unlikely]] {  // level full
+            ++_stat_rejected;
+            return;
+        }
 
         // Initialise the slot
         OrderSlot& slot = lvl.orders[slot_idx];
@@ -730,7 +826,15 @@ private:
         link_slot(lvl, slot_idx);
 
         // Update level aggregates
-        lvl.total_qty   += tick.qty;
+        int64_t new_total_qty = 0;
+        if (!numeric::checked_add(lvl.total_qty, tick.qty, new_total_qty)) [[unlikely]] {
+            unlink_slot(lvl, slot_idx);
+            deactivate_slot(slot);
+            remove_level_if_empty(sym, side, static_cast<uint16_t>(lvl_idx));
+            ++_stat_rejected;
+            return;
+        }
+        lvl.total_qty = new_total_qty;
         lvl.order_count += 1;
 
         // Register in the order-ref map
@@ -745,6 +849,7 @@ private:
             lvl.total_qty   -= tick.qty;
             lvl.order_count -= 1;
             remove_level_if_empty(sym, side, static_cast<uint16_t>(lvl_idx));
+            ++_stat_rejected;
         }
     }
 
@@ -859,13 +964,19 @@ private:
 
         // Look up the original order to determine its side
         const OrderLocation* orig_loc = _order_map.lookup(tick.order_ref);
-        if (!orig_loc || !valid_location(tick.order_ref, *orig_loc)) [[unlikely]] return;
+        if (!orig_loc || !valid_location(tick.order_ref, *orig_loc)) [[unlikely]] {
+            ++_stat_rejected;
+            return;
+        }
 
         // Save the side before deleting (the pointer may be invalidated
         // after remove if it triggers a level removal)
         const uint8_t  saved_side = orig_loc->side;
         const uint16_t saved_sym  = orig_loc->symbol_idx;
-        if (_order_map.lookup(tick.match_num) != nullptr) [[unlikely]] return;
+        if (!_order_map.can_insert(tick.match_num)) [[unlikely]] {
+            ++_stat_rejected;
+            return;
+        }
 
         // ── Delete the original order ────────────────────────────────────
         {
@@ -893,14 +1004,20 @@ private:
             int32_t lvl_idx = find_level(saved_sym, saved_side, price);
             if (lvl_idx < 0) {
                 lvl_idx = insert_level_impl(saved_sym, saved_side, price);
-                if (lvl_idx < 0) [[unlikely]] return;
+                if (lvl_idx < 0) [[unlikely]] {
+                    ++_stat_rejected;
+                    return;
+                }
             }
 
             PriceLevel& lvl = _arena->level(
                 saved_sym, saved_side, static_cast<uint32_t>(lvl_idx));
 
             const int32_t slot_idx = lvl.alloc_slot();
-            if (slot_idx < 0) [[unlikely]] return;
+            if (slot_idx < 0) [[unlikely]] {
+                ++_stat_rejected;
+                return;
+            }
 
             OrderSlot& slot = lvl.orders[slot_idx];
             slot.order_id = new_ref;
@@ -909,7 +1026,16 @@ private:
                           | ((saved_side == 0) ? OrderSlot::kFlagBid : 0u);
 
             link_slot(lvl, slot_idx);
-            lvl.total_qty   += qty;
+            int64_t new_total_qty = 0;
+            if (!numeric::checked_add(lvl.total_qty, qty, new_total_qty)) [[unlikely]] {
+                unlink_slot(lvl, slot_idx);
+                deactivate_slot(slot);
+                remove_level_if_empty(saved_sym, saved_side,
+                                      static_cast<uint16_t>(lvl_idx));
+                ++_stat_rejected;
+                return;
+            }
+            lvl.total_qty = new_total_qty;
             lvl.order_count += 1;
 
             OrderLocation loc;

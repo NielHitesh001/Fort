@@ -158,7 +158,10 @@ int main(int argc, char** argv) {
     limits.max_order_qty = 1'000;
     limits.max_abs_position = 10'000;
     limits.max_alpha_age_ns = 1'000'000;
-    gateway.risk().set_limits(3, limits);
+    if (!gateway.risk().set_limits(3, limits)) {
+        std::printf("invalid risk limits\n");
+        return 1;
+    }
 
     luv::TelemetryBatchCollector<256> collector;
     ExchangeSimulator sim;

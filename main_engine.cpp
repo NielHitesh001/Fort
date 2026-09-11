@@ -122,7 +122,11 @@ int main(int argc, char** argv) {
     luv::ExecutionGateway execution;
     if (!consumer.init(arena) || !execution.init(arena)) return 1;
     for (uint16_t symbol = 0; symbol < luv::Config::kSymbols; ++symbol) {
-        execution.risk().set_limits(symbol, {1'000, 100'000, 1'000'000'000});
+        if (!execution.risk().set_limits(
+                symbol, {1'000, 100'000, 1'000'000'000})) {
+            std::fprintf(stderr, "Invalid risk limits for symbol %u.\n", symbol);
+            return 1;
+        }
     }
 
     luv::AIEngine ai;

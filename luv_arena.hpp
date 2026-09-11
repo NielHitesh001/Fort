@@ -22,6 +22,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "luv_logging.hpp"
+
 namespace luv {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -408,6 +410,11 @@ constexpr size_t kGrandTotal = kInfraTotal + kAIRegion;
 // ─────────────────────────────────────────────────────────────────────────────
 class Arena {
 public:
+    enum class CapacityMode : uint8_t {
+        kFull,
+        // Infrastructure remains available; optional AI model storage did not map.
+        kInfrastructureOnly,
+    };
     // ── Primary views ────────────────────────────────────────────────────
 
     // lob[symbol][side][level]
@@ -437,22 +444,40 @@ public:
     ~Arena() { teardown(); }
 
     // init() must be called exactly once before any hot-path code runs.
-    // Returns true on success; false if mmap or mlock fails.
+    // If the optional AI region cannot be reserved, infrastructure-only mode
+    // remains available for feed reconstruction and risk simulation.
     [[nodiscard]] bool init() noexcept {
         if (_base) return false;  // already initialised
 
-        const size_t total = slab_sizes::kGrandTotal;
-        if (!can_align_up(slab_sizes::kInfraRaw, kHugePage) || total == 0)
+        if (!can_align_up(slab_sizes::kInfraRaw, kHugePage) ||
+            slab_sizes::kGrandTotal == 0)
             return false;
 
-        // Single mmap — huge-page backed where the kernel allows it
+        // Prefer one reservation containing infrastructure and model storage.
         void* mem = ::mmap(
-            nullptr, total,
+            nullptr, slab_sizes::kGrandTotal,
             PROT_READ | PROT_WRITE,
             MAP_PRIVATE | MAP_ANONYMOUS,
             -1, 0
         );
-        if (mem == MAP_FAILED) return false;
+        size_t total = slab_sizes::kGrandTotal;
+        _capacity_mode = CapacityMode::kFull;
+        if (mem == MAP_FAILED) {
+            // The infrastructure layout is fixed-size; shrinking it would
+            // invalidate spans and ring capacities. Only AI storage can be
+            // degraded without corrupting the ABI.
+            total = slab_sizes::kInfraTotal;
+            mem = ::mmap(nullptr, total, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (mem == MAP_FAILED) {
+                StructuredLogger::log(LogLevel::kFatal, "arena", "mmap_failed",
+                                      static_cast<int64_t>(slab_sizes::kInfraTotal));
+                return false;
+            }
+            _capacity_mode = CapacityMode::kInfrastructureOnly;
+            StructuredLogger::log(LogLevel::kWarn, "arena", "ai_region_unavailable",
+                                  static_cast<int64_t>(Config::kAIBudgetBytes));
+        }
 
         // Request huge-page backing for the infrastructure slabs
         // (advisory; kernel may ignore on macOS without entitlements)
@@ -508,8 +533,9 @@ public:
         // Align cursor to huge-page boundary before AI region
         cursor = _base + slab_sizes::kInfraTotal;
 
-        ai_region      = cursor;
-        ai_region_size = slab_sizes::kAIRegion;
+        ai_region      = (_capacity_mode == CapacityMode::kFull) ? cursor : nullptr;
+        ai_region_size = (_capacity_mode == CapacityMode::kFull)
+                       ? slab_sizes::kAIRegion : 0;
 
         // Zero infrastructure region (AI region left uninitialised until model load)
         std::memset(_base, 0, slab_sizes::kInfraTotal);
@@ -523,6 +549,9 @@ public:
         if (_mlocked) ::munlock(_base, slab_sizes::kInfraTotal);
         ::munmap(_base, _total_size);
         _base = nullptr;
+        ai_region = nullptr;
+        ai_region_size = 0;
+        _capacity_mode = CapacityMode::kFull;
         _initialised = false;
     }
 
@@ -586,10 +615,18 @@ public:
             slab_sizes::kExecState,
             slab_sizes::kTelemetry,
             slab_sizes::kInfraTotal,
-            slab_sizes::kAIRegion,
-            slab_sizes::kGrandTotal,
+            ai_region_size,
+            _total_size,
             _mlocked,
         };
+    }
+
+    [[nodiscard]] CapacityMode capacity_mode() const noexcept {
+        return _capacity_mode;
+    }
+
+    [[nodiscard]] bool ai_capacity_available() const noexcept {
+        return _capacity_mode == CapacityMode::kFull;
     }
 
     [[nodiscard]] CapacitySnapshot capacity_snapshot() const noexcept {
@@ -613,6 +650,7 @@ public:
 private:
     uint8_t* _base        = nullptr;
     size_t   _total_size  = 0;
+    CapacityMode _capacity_mode = CapacityMode::kFull;
     bool     _initialised = false;
     bool     _mlocked     = false;
 };

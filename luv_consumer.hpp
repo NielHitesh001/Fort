@@ -96,6 +96,11 @@ public:
         TickMsg* tick = _arena->tick_ring.try_peek();
         if (!tick) [[unlikely]] return false;
 
+        if (tick->symbol_idx >= Config::kSymbols) [[unlikely]] {
+            _arena->tick_ring.consume();
+            ++_rejected_ticks;
+            return true;
+        }
         _lob.process(*tick);
         _features.update(tick->symbol_idx, *tick);
         if (_ai) (void)_ai->infer_symbol(tick->symbol_idx);
@@ -107,6 +112,8 @@ public:
     void set_ai_engine(AIEngine* ai) noexcept {
         _ai = ai;
     }
+
+    [[nodiscard]] uint64_t rejected_ticks() const noexcept { return _rejected_ticks; }
 
     [[nodiscard]] uint64_t ticks_processed() const noexcept {
         return _tick_count;
@@ -151,6 +158,7 @@ private:
     Arena*            _arena = nullptr;
     std::atomic<bool> _running{false};
     uint64_t          _tick_count = 0;
+    uint64_t          _rejected_ticks = 0;
 };
 
 }  // namespace luv

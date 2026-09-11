@@ -1,28 +1,37 @@
 # Security & Safety Policy
 
-## 1. Security Design Principles
+## What Fort is not
 
-Fort is an educational and research framework for market microstructure simulation and C++ latency optimization. It incorporates several core software security and memory safety principles:
+Fort is educational simulation and research software. It is not a regulated broker-dealer, clearing member, trading venue, custody system, exchange-certified gateway, or regulatory-reporting service. Its OUCH/FIX components are simulation-oriented and are not live exchange integrations.
 
-- **Strict Pre-Allocation**: Dynamic allocations (`malloc`/`new`) are prohibited on critical processing paths, preventing memory exhaustion attacks and fragmentation vulnerabilities.
-- **Input Validation & Sanitization**: Incoming binary ITCH packets are validated for minimum buffer lengths, message type correctness, and numeric range bounds before parsing.
-- **Continuous Sanitizer Verification**: All 151 test suites are continuously tested under AddressSanitizer (ASan) and UndefinedBehaviorSanitizer (UBSan) to guarantee zero memory corruption, buffer overflows, or undefined behavior.
-- **Cryptographic Record Verification**: Audit logs utilize cryptographic previous-block hash chaining to detect any tampering or record deletion.
+The regulatory and surveillance modules implement models and scenarios for research. Their presence does not constitute SEC, FINRA, CFTC, CAT, or any other regulatory compliance certification.
 
----
+## Audit-trail limitations
 
-## 2. Limitations & Exclusions
+`DurableAuditLog` provides local SHA-256 hash chaining. It can detect changes to records within the history it is given, and an externally preserved manifest can anchor a specific range. It does not provide immutable storage, independent custody, trusted timestamps, retention enforcement, or proof that earlier history was not removed and re-created.
 
-Because Fort is designed for simulation and educational research:
-- It does **not** include network-level DDoS mitigation or transport-layer TLS encryption.
-- It does **not** manage external user credentials, API keys, or financial custody private keys.
-- It is **not** audited or certified for live financial capital management.
+An actor with filesystem access can truncate a log and its local checkpoint or produce a new valid chain. Do not submit these records to a regulator or represent them as compliant with SEC Rule 17a-4, FINRA recordkeeping rules, or CAT requirements.
 
----
+## Threat model
 
-## 3. Testing with LLVM Sanitizers
+In scope: malformed input rejection, bounded in-memory structures, and detection of accidental local corruption in a supplied audit file.
 
-To build and verify the codebase with AddressSanitizer and UndefinedBehaviorSanitizer:
+Out of scope: an adversary controlling the host or filesystem, live exchange authentication, DDoS protection, customer credential management, financial custody, regulatory retention, and compliance certification.
+
+## A compliant deployment requires
+
+- Independently administered WORM or immutable storage with retention and legal-hold controls.
+- External custody and regulator-access arrangements appropriate to the applicable rule set.
+- Trusted timestamping and protected signing keys, typically through a managed service or HSM-backed system.
+- Production exchange connectivity, reconciliation, operational controls, and independent legal/compliance review.
+
+## Security design practices
+
+- Critical paths use pre-allocated memory to limit allocation pressure and fragmentation.
+- Supported ITCH messages are length- and range-validated before decoding.
+- The project supports ASan and UBSan builds; passing tests increase confidence but are not a guarantee of absence of defects.
+
+## Testing with LLVM Sanitizers
 
 ```bash
 cmake -S . -B build-asan -DLUV_ENABLE_ASAN_UBSAN=ON
@@ -30,8 +39,6 @@ cmake --build build-asan --parallel
 ctest --test-dir build-asan --output-on-failure
 ```
 
----
-
-## 4. Reporting Vulnerabilities
+## Reporting vulnerabilities
 
 If you discover a security vulnerability or bug within this educational framework, please open an issue on GitHub or submit a pull request with regression tests.

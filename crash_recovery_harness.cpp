@@ -70,7 +70,10 @@ bool build_and_crash_child(uint32_t crash_after_order) {
     limits.max_order_qty = 1'000;
     limits.max_abs_position = 10'000;
     limits.max_alpha_age_ns = 1'000'000;
-    gateway.risk().set_limits(3, limits);
+    if (!gateway.risk().set_limits(3, limits)) {
+        std::fprintf(stderr, "invalid risk limits\n");
+        return false;
+    }
 
     for (uint32_t i = 1; i <= crash_after_order; ++i) {
         const uint64_t now_ns = monotonic_ns();

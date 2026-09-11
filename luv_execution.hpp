@@ -14,6 +14,8 @@
 #include <cstdio>
 
 #include "luv_arena.hpp"
+#include "luv_logging.hpp"
+#include "luv_numeric_limits.hpp"
 #include "luv_recovery.hpp"
 #include "luv_safety.hpp"
 
@@ -71,12 +73,22 @@ struct RiskLimits {
     int64_t max_order_qty = 1'000;
     int64_t max_abs_position = 100'000;
     uint64_t max_alpha_age_ns = 250'000; // 250 us
-    int64_t min_price = 1;
-    int64_t max_price = 10'000'000'000;
+    int64_t min_price = numeric::kMinPrice;
+    // OUCH serializes price as uint32; accepting a larger risk limit would
+    // create orders that pass validation but cannot be encoded.
+    int64_t max_price = numeric::kMaxPrice;
     int64_t reference_price = 0;       // 0 = collar check disabled
     int64_t max_price_collar_pct = 10; // 10% max collar deviation if reference_price > 0
     int64_t max_gross_loss = 0;        // 0 = disabled
     uint32_t max_consecutive_rejections = 5; // max rejections before per-symbol halt
+
+    [[nodiscard]] constexpr bool is_valid() const noexcept {
+        return numeric::is_valid_quantity(max_order_qty) && max_abs_position >= 0 &&
+               numeric::is_valid_price(min_price) && max_price >= min_price &&
+               max_price <= numeric::kMaxPrice && reference_price >= 0 &&
+               max_price_collar_pct >= 0 && max_price_collar_pct <= 100 &&
+               max_gross_loss >= 0;
+    }
 };
 
 struct OrderIntent {
@@ -190,9 +202,14 @@ public:
         return true;
     }
 
-    void set_limits(uint16_t sym, const exec::RiskLimits& limits) noexcept {
-        if (sym >= Config::kSymbols) return;
+    bool set_limits(uint16_t sym, const exec::RiskLimits& limits) noexcept {
+        if (sym >= Config::kSymbols || !limits.is_valid()) {
+            StructuredLogger::log(LogLevel::kError, "risk", "invalid_limits",
+                                  sym, limits.max_order_qty);
+            return false;
+        }
         _limits[sym] = limits;
+        return true;
     }
 
     [[nodiscard]] const exec::RiskLimits& limits(uint16_t sym) const noexcept {
@@ -218,7 +235,10 @@ public:
         int64_t projected = 0;
         const uint8_t position_add_ok = static_cast<uint8_t>(
             !__builtin_add_overflow(risk.net_position, signed_delta, &projected));
-        const uint64_t age_ns = intent.now_ns - intent.alpha_timestamp_ns;
+        const uint8_t timestamp_ordered = static_cast<uint8_t>(
+            intent.now_ns >= intent.alpha_timestamp_ns);
+        const uint64_t age_ns = timestamp_ordered
+            ? intent.now_ns - intent.alpha_timestamp_ns : 0;
 
         const uint8_t valid_pos =
             static_cast<uint8_t>(position_add_ok &
@@ -226,7 +246,8 @@ public:
                 (exec::abs_i64(projected) <=
                  static_cast<uint64_t>(limits.max_abs_position)));
         const uint8_t valid_alpha =
-            static_cast<uint8_t>(age_ns <= limits.max_alpha_age_ns);
+            static_cast<uint8_t>(timestamp_ordered &
+                                 (age_ns <= limits.max_alpha_age_ns));
         const uint8_t valid_halt =
             static_cast<uint8_t>(risk.halted == 0);
         const uint8_t valid_price = static_cast<uint8_t>(
@@ -235,10 +256,11 @@ public:
             (static_cast<uint64_t>(intent.price) <= 0xFFFF'FFFFULL));
         uint8_t collar_ok = 1;
         if (limits.reference_price > 0 && limits.max_price_collar_pct > 0) {
-            const int64_t diff = (intent.price >= limits.reference_price)
-                ? (intent.price - limits.reference_price)
-                : (limits.reference_price - intent.price);
-            const int64_t max_allowed_diff = (limits.reference_price * limits.max_price_collar_pct) / 100;
+            const uint64_t price = static_cast<uint64_t>(intent.price);
+            const uint64_t reference = static_cast<uint64_t>(limits.reference_price);
+            const uint64_t diff = price >= reference ? price - reference : reference - price;
+            const uint64_t max_allowed_diff =
+                (reference * static_cast<uint64_t>(limits.max_price_collar_pct)) / 100;
             collar_ok = static_cast<uint8_t>(diff <= max_allowed_diff);
         }
         const uint8_t valid_price_final = valid_price & collar_ok;

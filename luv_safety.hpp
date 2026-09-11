@@ -1,5 +1,16 @@
 #pragma once
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ AUDIT TRAIL: SIMULATION ONLY                                             ║
+// ║                                                                          ║
+// ║ DurableAuditLog uses a local SHA-256 hash chain for accidental-corruption ║
+// ║ detection. It is NOT an SEC Rule 17a-4, FINRA, CAT, or WORM-compliant    ║
+// ║ recordkeeping system. It cannot prove the absence of truncated history   ║
+// ║ or defend against an actor able to replace local files and checkpoints.  ║
+// ║ Regulated deployments require independently administered WORM custody,  ║
+// ║ retention controls, trusted timestamps, and legal/compliance review.    ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
 #include <array>
 #include <atomic>
 #include <cerrno>
