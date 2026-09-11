@@ -18,19 +18,19 @@ void test_sec_reg_m_offering_restrictions() {
     }));
 
     // 1. Inside restricted period (T=3000): Syndicate MPID 101 tries to Bid (Buy) -> Prohibited
-    auto r1 = validator.validate_order(1, 101, luv::exec::kBuy, 50'0000LL, 3000);
+    auto r1 = validator.validate_order(1, 101, luv::exec::kBuy, 3000);
     assert(r1 == luv::compliance::RegMRestrictedReason::kRestrictedPeriodBiddingProhibited);
 
     // 2. Inside restricted period (T=3000): Syndicate MPID 101 submits Sell order -> Allowed
-    auto r2 = validator.validate_order(1, 101, luv::exec::kSell, 50'0000LL, 3000);
+    auto r2 = validator.validate_order(1, 101, luv::exec::kSell, 3000);
     assert(r2 == luv::compliance::RegMRestrictedReason::kNone);
 
     // 3. Inside restricted period (T=3000): Unaffiliated MPID 202 tries to Buy -> Allowed
-    auto r3 = validator.validate_order(1, 202, luv::exec::kBuy, 50'0000LL, 3000);
+    auto r3 = validator.validate_order(1, 202, luv::exec::kBuy, 3000);
     assert(r3 == luv::compliance::RegMRestrictedReason::kNone);
 
     // 4. After pricing (T=6000): Syndicate MPID 101 buys -> Allowed
-    auto r4 = validator.validate_order(1, 101, luv::exec::kBuy, 50'0000LL, 6000);
+    auto r4 = validator.validate_order(1, 101, luv::exec::kBuy, 6000);
     assert(r4 == luv::compliance::RegMRestrictedReason::kNone);
 
     std::printf("[PASS] test_sec_reg_m_offering_restrictions\n");

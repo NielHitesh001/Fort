@@ -44,7 +44,8 @@ public:
     }
 
     // Evaluates order against SEC Regulation M (Rules 101 & 102)
-    RegMRestrictedReason validate_order(uint16_t sym, uint32_t mpid, uint8_t side, int64_t price, uint64_t current_time_ns) const noexcept {
+    // ✅ FIXED: Removed unused parameter 'price' - it was defined but never used in the function logic
+    RegMRestrictedReason validate_order(uint16_t sym, uint32_t mpid, uint8_t side, uint64_t current_time_ns) const noexcept {
         const auto* off = find_offering(sym);
         if (!off) return RegMRestrictedReason::kNone; // No offering in progress
 

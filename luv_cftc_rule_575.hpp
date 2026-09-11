@@ -60,7 +60,7 @@ public:
         if (entry_count_ < 4) return alert;
 
         size_t total_orders = 0;
-        size_t total_cancels = 0;
+        // ✅ FIXED: Removed unused variable 'total_cancels' - it was set but never actually used in calculations
         size_t rapid_cancels = 0;
 
         for (size_t i = 0; i < entry_count_; ++i) {
@@ -72,7 +72,7 @@ public:
                 // Look for matching cancel
                 for (size_t j = i + 1; j < entry_count_; ++j) {
                     if (entries_[j].order_id == oid && entries_[j].is_cancel) {
-                        ++total_cancels;
+                        // Removed total_cancels increment since it was never used
                         if (entries_[j].timestamp_ns <= entry_time + kRapidCancelNs) {
                             ++rapid_cancels;
                         }

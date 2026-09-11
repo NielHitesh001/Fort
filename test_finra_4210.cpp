@@ -20,7 +20,7 @@ int main() {
 
     // 2. Covered Call: 100 shares of stock @ $100.00 ($10,000 val) + Short 1 Call @ $105 strike
     // Margin = Reg T 50% on stock = $5,000; 0 additional on short call
-    auto cov_call = luv::Finra4210MarginCalculator::calculate_covered_call(100, 1'000'000, 1'050'000, 15'000, 1);
+    auto cov_call = luv::Finra4210MarginCalculator::calculate_covered_call(100, 1'000'000);
     assert(cov_call.recognized_strategy == luv::SpreadStrategy::CoveredCall);
     assert(cov_call.initial_margin_required == 5000);
     assert(cov_call.maintenance_margin_required == 2500);

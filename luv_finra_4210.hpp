@@ -79,12 +79,10 @@ public:
     }
 
     // Covered Call: Long stock + Short Call (No margin required on the short call under FINRA 4210(f)(2)(H))
+    // ✅ FIXED: Removed unused parameters call_strike, call_premium, call_contracts
     static FinraMarginResult calculate_covered_call(
         uint64_t stock_shares,
-        uint64_t stock_price,
-        uint64_t call_strike,
-        uint64_t call_premium,
-        uint64_t call_contracts) noexcept
+        uint64_t stock_price) noexcept
     {
         FinraMarginResult res;
         res.recognized_strategy = SpreadStrategy::CoveredCall;

@@ -56,14 +56,14 @@ public:
         // 2. Compute effective integrated variance with rough correction
         // E[v_t] = xi0 * exp(0) = xi0
         // Var(v_t) scales with t^{2H}
-        double var_drift_adj = 0.5 * eta * eta * std::pow(t, 2.0 * h);
+
         double total_var = xi0 * t * (1.0 + 0.5 * rho * eta * std::pow(t, h));
         total_var = std::max(1e-6, total_var);
-        double total_vol = std::sqrt(total_var);
+
 
         // 3. Black-Scholes formula with rough skew shift
         double f = s0 * std::exp(r * t);
-        double log_moneyness = std::log(s0 / k) + r * t;
+
         
         // Adjust sigma by moneyness skew: sigma(k) ~ sigma_0 + skew * ln(k / f)
         double sigma_k = std::sqrt(xi0) + res.atm_skew * std::log(k / f);

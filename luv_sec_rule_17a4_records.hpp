@@ -92,8 +92,8 @@ public:
         return false;
     }
 
-    Rule17a4VerificationResult audit_records(uint64_t current_timestamp_ns, 
-                                             StorageComplianceMode mode = StorageComplianceMode::AuditTrailAlternative) const noexcept 
+    // ✅ FIXED: Removed unused parameter 'mode' - it was defined but never used in the function
+    Rule17a4VerificationResult audit_records(uint64_t current_timestamp_ns) const noexcept 
     {
         Rule17a4VerificationResult result{};
         result.total_records_checked = count_;
