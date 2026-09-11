@@ -3,7 +3,7 @@ kind: ConfigMap
 metadata:
   name: luv-prometheus-config
   labels:
-    app: luv-engine
+    app: fort-engine
 data:
   prometheus.yml: |
     global:
@@ -13,7 +13,12 @@ data:
     scrape_configs:
       - job_name: 'luv_microstructure_engine'
         static_configs:
-          - targets: ['luv-engine-service:9100']
+          - targets: ['fort-engine:9090']
+        # Mount the metrics-only fort-metrics-auth Secret at
+        # /etc/prometheus/secrets/fort-metrics-auth in the Prometheus pod.
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/secrets/fort-metrics-auth/metrics-token
         metric_relabel_configs:
           - source_labels: [__name__]
             regex: 'luv_.*'

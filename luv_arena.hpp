@@ -50,6 +50,12 @@ struct Config {
     // Order / risk state
     static constexpr uint32_t kMaxActiveOrders   = 64;   // per symbol
 
+    // WebSocket control plane. The concrete Connection type stays in the
+    // WebSocket module to avoid an Arena↔WebSocket header cycle; this fixed
+    // raw slab is large enough for each bounded connection slot.
+    static constexpr uint32_t kWebSocketConnections = 1000;
+    static constexpr size_t kWebSocketConnectionSlotBytes = 10U * 1024U;
+
     // Telemetry SPSC
     static constexpr uint32_t kTelemCapacity     = 1u << 16;  // 65 536 slots
     static constexpr uint32_t kTelemMask         = kTelemCapacity - 1;
@@ -222,6 +228,11 @@ struct alignas(kCacheLine) TelemSnapshot {
     int32_t  reject_count    = 0;
     uint32_t tick_rate_hz    = 0;
     uint32_t active_orders   = 0;
+    // Monotonic producer-owned totals for Prometheus counters.  The legacy
+    // int32 fields above remain bounded observation gauges for compatibility.
+    uint64_t fills_total     = 0;
+    uint64_t rejections_total = 0;
+    uint64_t websocket_fill_notification_drops_total = 0;
     float    inference_us    = 0.f; // last inference latency
     float    risk_ns         = 0.f; // last risk check latency
     uint8_t  halted          = 0;
@@ -387,9 +398,16 @@ constexpr size_t kExecState = static_cast<size_t>(Config::kSymbols)
 constexpr size_t kTelemetry = static_cast<size_t>(Config::kTelemCapacity)
                             * sizeof(TelemSnapshot);  // 8 388 608 bytes ≈ 8 MB
 
+constexpr size_t kWebSocketControlPlane =
+    static_cast<size_t>(Config::kWebSocketConnections) *
+    Config::kWebSocketConnectionSlotBytes;
+static_assert(kWebSocketControlPlane % kCacheLine == 0,
+              "WebSocket slab must preserve cache-line alignment");
+
 // Total infrastructure (rounded up to 2 MB huge-page boundary)
 constexpr size_t kInfraRaw  = kLOB + kTickRing + kFeatures
-                            + kSignals + kExecState + kTelemetry;
+                            + kSignals + kExecState + kTelemetry
+                            + kWebSocketControlPlane;
 constexpr size_t kInfraTotal = align_up(kInfraRaw, kHugePage);
 
 // AI model region — everything else up to 15.5 GB ceiling
@@ -426,6 +444,10 @@ public:
     std::span<SignalOutput>  signal_slots;
     std::span<SymbolExecState> exec_states;
     std::span<TelemSnapshot> telem_slots;
+    // Opaque fixed storage borrowed by the WebSocket server at start-up.
+    // It is intentionally raw to keep this foundational header independent
+    // of the WebSocket Connection type.
+    std::span<std::byte> websocket_connection_storage;
     std::atomic<uint64_t> telemetry_drops{0};
 
     // SPSC ring heads (slots pointers wired to the spans above after init)
@@ -530,6 +552,11 @@ public:
         telem_ring.slots = telem_ptr;
         cursor          += slab_sizes::kTelemetry;
 
+        auto* websocket_ptr = reinterpret_cast<std::byte*>(cursor);
+        websocket_connection_storage = {
+            websocket_ptr, slab_sizes::kWebSocketControlPlane};
+        cursor += slab_sizes::kWebSocketControlPlane;
+
         // Align cursor to huge-page boundary before AI region
         cursor = _base + slab_sizes::kInfraTotal;
 
@@ -551,6 +578,7 @@ public:
         _base = nullptr;
         ai_region = nullptr;
         ai_region_size = 0;
+        websocket_connection_storage = {};
         _capacity_mode = CapacityMode::kFull;
         _initialised = false;
     }
@@ -587,6 +615,7 @@ public:
         size_t signal_bytes;
         size_t exec_bytes;
         size_t telem_bytes;
+        size_t websocket_control_plane_bytes;
         size_t infra_total_bytes;
         size_t ai_region_bytes;
         size_t grand_total_bytes;
@@ -614,6 +643,7 @@ public:
             slab_sizes::kSignals,
             slab_sizes::kExecState,
             slab_sizes::kTelemetry,
+            slab_sizes::kWebSocketControlPlane,
             slab_sizes::kInfraTotal,
             ai_region_size,
             _total_size,

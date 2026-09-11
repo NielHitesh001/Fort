@@ -36,6 +36,17 @@ luv::exec::OrderIntent make_intent(uint64_t now) {
     return intent;
 }
 
+struct RejectingFillCallback {
+    uint32_t calls = 0;
+};
+
+[[nodiscard]] bool reject_fill_callback(
+    void* context, const luv::ExecutionGateway::FillEvent&) noexcept {
+    auto* const probe = static_cast<RejectingFillCallback*>(context);
+    ++probe->calls;
+    return false;
+}
+
 void test_branchless_risk() {
     std::printf("\n== Branchless risk ==\n");
 
@@ -164,6 +175,7 @@ void test_ouch_template_and_gateway() {
     assert(capacity_reject.pass == 0);
     assert(packet.len == 0);
     assert(arena.exec_states[3].risk.halted == 1);
+    assert(arena.exec_states[3].risk.reject_count == 1);
 
     auto reject = intent;
     reject.qty = 5'000;
@@ -171,7 +183,7 @@ void test_ouch_template_and_gateway() {
     const auto rejected = gateway.try_build(reject, rejected_packet);
     assert(rejected.pass == 0);
     assert(rejected_packet.len == 0);
-    assert(arena.exec_states[3].risk.reject_count == 1);
+    assert(arena.exec_states[3].risk.reject_count == 2);
 
     auto invalid = intent;
     invalid.symbol_idx = luv::Config::kSymbols;
@@ -185,6 +197,42 @@ void test_ouch_template_and_gateway() {
     assert((capacity_decision.reject_mask & luv::exec::kRejectOrderCapacity) != 0);
 
     std::printf("  [OK] fixed offsets patched and rejects suppress packet len\n");
+}
+
+void test_capacity_rejection_is_counted() {
+    std::printf("\n== Capacity rejection accounting ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+    luv::ExecutionGateway gateway;
+    assert(gateway.init(arena));
+
+    luv::exec::RiskLimits limits{};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 1'000'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    assert(gateway.risk().set_limits(3, limits));
+
+    const uint64_t now = now_ns();
+    const auto intent = make_intent(now);
+    luv::OutboundPacket packet{};
+    for (uint32_t i = 0; i < luv::Config::kMaxActiveOrders; ++i) {
+        auto accepted = intent;
+        accepted.client_order_id += i;
+        assert(gateway.try_build(accepted, packet).pass == 1);
+    }
+
+    const uint32_t rejects_before = arena.exec_states[3].risk.reject_count;
+    auto excess = intent;
+    excess.client_order_id += luv::Config::kMaxActiveOrders;
+    const auto rejected = gateway.try_build(excess, packet);
+    assert(rejected.pass == 0);
+    assert((rejected.reject_mask & luv::exec::kRejectOrderCapacity) != 0);
+    assert(packet.len == 0);
+    assert(arena.exec_states[3].risk.reject_count == rejects_before + 1);
+    assert(arena.exec_states[3].risk.halted == 1);
+
+    std::printf("  [OK] capacity-full admission increments rejection count\n");
 }
 
 void test_production_controls() {
@@ -307,19 +355,122 @@ void test_audit_admission() {
     luv::OutboundPacket packet {};
     assert(gateway.try_build(intent, packet).pass == 1);
     assert(audit.size() == 1);
+    assert(gateway.fill_report_count() == 0);
     assert(gateway.apply_execution_report(
         3, luv::ExecutionReport{intent.client_order_id, 40, false}));
+    assert(gateway.fill_report_count() == 1);
     assert(arena.exec_states[3].orders[0].filled_qty == 40);
     assert(arena.exec_states[3].orders[0].state == 2);
     assert(gateway.apply_execution_report(
         3, luv::ExecutionReport{intent.client_order_id, 60, true}));
+    assert(gateway.fill_report_count() == 2);
     assert(arena.exec_states[3].risk.order_count == 0);
     assert(!gateway.apply_execution_report(
         3, luv::ExecutionReport{intent.client_order_id, 1, false}));
+    assert(gateway.fill_report_count() == 2);
     audit.close();
     ::unlink(path);
 
     std::printf("  [OK] accepted order durably recorded\n");
+}
+
+void test_fill_notification_backpressure_accounting() {
+    std::printf("\n== Fill notification backpressure accounting ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+    luv::ExecutionGateway gateway;
+    assert(gateway.init(arena));
+
+    luv::exec::RiskLimits limits{};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 10'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    assert(gateway.risk().set_limits(3, limits));
+
+    RejectingFillCallback callback{};
+    gateway.set_fill_event_callback(&reject_fill_callback, &callback);
+    const auto intent = make_intent(now_ns());
+    luv::OutboundPacket packet{};
+    assert(gateway.try_build(intent, packet).pass == 1);
+    assert(gateway.apply_execution_report(
+        3, luv::ExecutionReport{intent.client_order_id, intent.qty, true}));
+
+    assert(callback.calls == 1);
+    assert(gateway.fill_report_count() == 1);
+    assert(gateway.dropped_fill_notifications() == 1);
+    gateway.set_fill_event_callback(nullptr, nullptr);
+    std::printf("  [OK] bounded fill notification failure is counted without retrying\n");
+}
+
+void test_terminal_partial_fill_releases_reservation() {
+    std::printf("\n== Terminal partial fill reservation release ==\n");
+
+    luv::Arena arena;
+    assert(arena.init());
+    luv::ExecutionGateway gateway;
+    assert(gateway.init(arena));
+
+    const char* ledger_path = "/tmp/luv-terminal-partial-fill.bin";
+    ::unlink(ledger_path);
+    luv::RecoveryLedger ledger;
+    assert(ledger.open(ledger_path));
+    gateway.set_recovery_ledger(&ledger);
+
+    luv::exec::RiskLimits limits{};
+    limits.max_order_qty = 1'000;
+    limits.max_abs_position = 10'000;
+    limits.max_alpha_age_ns = 1'000'000;
+    assert(gateway.risk().set_limits(3, limits));
+
+    const auto intent = make_intent(now_ns());
+    luv::OutboundPacket packet{};
+    assert(gateway.try_build(intent, packet).pass == 1);
+    assert(arena.exec_states[3].risk.net_position == intent.qty);
+    assert(arena.exec_states[3].risk.gross_exposure ==
+           intent.qty * intent.price);
+
+    // The venue filled 40 and terminally cancelled the remaining 60. The
+    // settled position must retain only the executed quantity.
+    assert(gateway.apply_execution_report(
+        3, luv::ExecutionReport{intent.client_order_id, 40, true}));
+    // Add + one terminal transition: terminal partial recovery is a single
+    // durable record, not a crash-visible Fill followed by Cancel pair.
+    assert(ledger.size() == 2);
+    const luv::ActiveOrder& terminal = arena.exec_states[3].orders[0];
+    assert(terminal.state == 3);
+    assert(terminal.filled_qty == 40 && terminal.qty == 60);
+    assert(arena.exec_states[3].risk.order_count == 0);
+    assert(arena.exec_states[3].risk.net_position == 40);
+    assert(arena.exec_states[3].risk.gross_exposure == 40 * intent.price);
+
+    luv::RecoveredOrder recovered[1]{};
+    uint32_t recovered_count = 0;
+    assert(ledger.replay(recovered, 1, recovered_count));
+    assert(recovered_count == 0);
+
+    // A duplicate cancel report or a REST cancel after terminal completion is
+    // a benign not-found result; neither path may halt the symbol.
+    assert(!gateway.apply_cancel_report(3, intent.client_order_id));
+    assert(!gateway.cancel_order(intent.client_order_id));
+    const uint32_t rejects_before = arena.exec_states[3].risk.reject_count;
+    const int64_t net_before = arena.exec_states[3].risk.net_position;
+    const int64_t gross_before = arena.exec_states[3].risk.gross_exposure;
+    const uint32_t active_before = arena.exec_states[3].risk.order_count;
+    // A delayed reject after this terminal partial fill is stale. It must be
+    // a no-op rather than clearing the retained terminal snapshot or
+    // accounting the unfilled remainder a second time.
+    assert(!gateway.apply_reject_report(3, intent.client_order_id, 'R'));
+    assert(terminal.state == 3 && terminal.filled_qty == 40 && terminal.qty == 60);
+    assert(arena.exec_states[3].risk.reject_count == rejects_before);
+    assert(arena.exec_states[3].risk.net_position == net_before);
+    assert(arena.exec_states[3].risk.gross_exposure == gross_before);
+    assert(arena.exec_states[3].risk.order_count == active_before);
+    assert(!gateway.circuit_breaker().tripped());
+    assert(!arena.exec_states[3].risk.halted);
+    ledger.close();
+    ::unlink(ledger_path);
+    std::printf("  [OK] terminal partial release and duplicate cancel are safe\n");
 }
 
 void test_recovery_failure_preserves_live_order() {
@@ -348,13 +499,15 @@ void test_recovery_failure_preserves_live_order() {
     ledger.close();
 
     assert(!gateway.apply_execution_report(
-        3, luv::ExecutionReport{intent.client_order_id, 40, false}));
+        3, luv::ExecutionReport{intent.client_order_id, 40, true}));
     assert(arena.exec_states[3].orders[0].filled_qty == 0);
     assert(arena.exec_states[3].orders[0].qty == intent.qty);
     assert(arena.exec_states[3].orders[0].state == 1);
+    assert(arena.exec_states[3].risk.net_position == intent.qty);
+    assert(arena.exec_states[3].risk.gross_exposure == intent.qty * intent.price);
 
     ::unlink(path);
-    std::printf("  [OK] failed fill persistence leaves live order unchanged\n");
+    std::printf("  [OK] failed terminal transition leaves live order unchanged\n");
 }
 
 void test_order_replace_flow() {
@@ -468,12 +621,15 @@ int main() {
 
     test_branchless_risk();
     test_ouch_template_and_gateway();
+    test_capacity_rejection_is_counted();
     test_order_replace_flow();
     test_circuit_breaker_cooldown();
     test_production_controls();
     test_duplicate_order_id_fails_closed();
     test_gateway_fail_closed_controls();
     test_audit_admission();
+    test_fill_notification_backpressure_accounting();
+    test_terminal_partial_fill_releases_reservation();
     test_recovery_failure_preserves_live_order();
     benchmark_risk_core();
 

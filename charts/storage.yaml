@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: luv-audit-pvc
+  labels:
+    app: fort-engine
+    component: audit-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Pilot default only. Select capacity and a StorageClass appropriate
+      # for the environment's retention policy before production use.
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: luv-wal-pvc
+  labels:
+    app: fort-engine
+    component: wal-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Pilot default only. Select capacity and a StorageClass appropriate
+      # for the environment's retention policy before production use.
+      storage: 20Gi

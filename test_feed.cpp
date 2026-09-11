@@ -206,6 +206,9 @@ static void test_sim_feed_pipeline() {
            r.exec_bytes, (double)r.exec_bytes / (1<<20));
     printf("  Telemetry:   %10zu bytes  (%.1f MiB)\n",
            r.telem_bytes, (double)r.telem_bytes / (1<<20));
+    printf("  WebSocket:   %10zu bytes  (%.1f MiB)\n",
+           r.websocket_control_plane_bytes,
+           (double)r.websocket_control_plane_bytes / (1<<20));
     printf("  ─────────────────────────────────────────────\n");
     printf("  Infra total: %10zu bytes  (%.1f MiB)\n",
            r.infra_total_bytes, (double)r.infra_total_bytes / (1<<20));

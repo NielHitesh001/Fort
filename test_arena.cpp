@@ -16,6 +16,10 @@ int main() {
     std::cout << "Signal bytes: " << report.signal_bytes << std::endl;
     std::cout << "Exec bytes: " << report.exec_bytes << std::endl;
     std::cout << "Telemetry bytes: " << report.telem_bytes << std::endl;
+    std::cout << "WebSocket control-plane bytes: "
+              << report.websocket_control_plane_bytes << std::endl;
+    assert(arena.websocket_connection_storage.size() ==
+           report.websocket_control_plane_bytes);
     std::cout << "Total infrastructure bytes (rounded): " << report.infra_total_bytes << std::endl;
     std::cout << "AI region bytes: " << report.ai_region_bytes << std::endl;
     std::cout << "Grand total bytes: " << report.grand_total_bytes << std::endl;

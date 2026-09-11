@@ -64,8 +64,15 @@ if(LUV_REQUIRE_MLOCK)
     target_compile_definitions(luv_core INTERFACE LUV_REQUIRE_MLOCK=1)
 endif()
 
+add_library(luv_http_server_impl STATIC luv_http_server.cpp)
+target_link_libraries(luv_http_server_impl PRIVATE luv_core Threads::Threads)
+add_library(luv_websocket_impl STATIC luv_websocket.cpp)
+target_link_libraries(luv_websocket_impl PRIVATE luv_core Threads::Threads)
+target_compile_options(luv_websocket_impl PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Werror>)
+
 add_executable(luv_engine main_engine.cpp)
-target_link_libraries(luv_engine PRIVATE luv_core Threads::Threads)
+target_link_libraries(luv_engine PRIVATE luv_core luv_http_server_impl luv_websocket_impl Threads::Threads)
 if(CMAKE_DL_LIBS)
     target_link_libraries(luv_engine PRIVATE ${CMAKE_DL_LIBS})
 endif()
@@ -156,6 +163,7 @@ set(LUV_TESTS
     hawkes_process
     heston_pricer
     hft_feature_pipeline
+    http_server
     hw_watchdog
     irs
     isda_simm
@@ -238,6 +246,7 @@ set(LUV_TESTS
     vol_surface
     vpin
     vwap_twap_execution
+    websocket
     worm_audit
     xccy_swap
     yield_curve
@@ -251,6 +260,11 @@ enable_testing()
 foreach(test_name IN LISTS LUV_TESTS)
     luv_add_test(${test_name})
 endforeach()
+target_link_libraries(luv_http_server PRIVATE luv_http_server_impl luv_websocket_impl)
+target_link_libraries(luv_websocket PRIVATE luv_http_server_impl luv_websocket_impl)
+# Keep the conventional CTest target name while exposing the standalone
+# `test_websocket` binary requested by the WebSocket microbenchmark workflow.
+set_target_properties(luv_websocket PROPERTIES OUTPUT_NAME test_websocket)
 
 add_executable(luv_latency_benchmark test_latency.cpp)
 target_link_libraries(luv_latency_benchmark PRIVATE luv_core Threads::Threads)

@@ -34,8 +34,8 @@ spec:
         securityContext:
           capabilities:
             add:
-              - SYS_NICE
-              - IPC_LOCK
+            - SYS_NICE
+            - IPC_LOCK
         resources:
           requests:
             cpu: "4"

@@ -8,7 +8,7 @@
       "type": "stat",
       "title": "Session PnL",
       "datasource": "Prometheus",
-      "targets": [{ "expr": "luv_session_pnl" }],
+      "targets": [{ "expr": "luv_execution_session_pnl" }],
       "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
     },
@@ -16,29 +16,29 @@
       "type": "stat",
       "title": "Active Orders",
       "datasource": "Prometheus",
-      "targets": [{ "expr": "luv_active_orders" }],
+      "targets": [{ "expr": "luv_execution_active_orders" }],
       "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 }
     },
     {
       "type": "stat",
       "title": "Risk Latency",
       "datasource": "Prometheus",
-      "targets": [{ "expr": "luv_risk_ns" }],
+      "targets": [{ "expr": "luv_execution_risk_check_latency_nanoseconds" }],
       "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "ns" } }
     },
     {
       "type": "timeseries",
-      "title": "Fill Count",
+      "title": "Fills Total",
       "datasource": "Prometheus",
-      "targets": [{ "expr": "rate(luv_fill_count[5m])" }],
+      "targets": [{ "expr": "luv_execution_fills_total" }],
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 }
     },
     {
       "type": "timeseries",
-      "title": "Rejected Orders",
+      "title": "Rejections Total",
       "datasource": "Prometheus",
-      "targets": [{ "expr": "rate(luv_reject_count[5m])" }],
+      "targets": [{ "expr": "luv_execution_rejections_total" }],
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 }
     }
   ]

@@ -393,6 +393,16 @@ private:
 
 class ExecutionGateway {
 public:
+    struct FillEvent {
+        uint64_t order_id = 0;
+        // Cumulative executed quantity for this order.  Consumers can render
+        // partial fills without maintaining a second, potentially stale,
+        // per-order accumulator on an I/O thread.
+        int64_t filled_qty = 0;
+        int64_t fill_price = 0;
+        uint64_t timestamp_ns = 0;
+    };
+    using FillEventCallback = bool (*)(void*, const FillEvent&) noexcept;
     explicit ExecutionGateway(uint32_t rate_limit = 10'000) noexcept
         : _rate_limiter(rate_limit) {}
 
@@ -402,6 +412,8 @@ public:
         if (!_risk.init(arena)) return false;
         if (!_ouch.init()) return false;
         _breaker.reset();
+        _fill_report_count = 0;
+        _dropped_fill_notifications = 0;
         return true;
     }
 
@@ -410,6 +422,20 @@ public:
     [[nodiscard]] CircuitBreaker& circuit_breaker() noexcept { return _breaker; }
     [[nodiscard]] const CircuitBreaker& circuit_breaker() const noexcept {
         return _breaker;
+    }
+
+    // The execution owner increments this only after a venue/simulator fill
+    // has passed reconciliation.  I/O workers receive it only through a
+    // telemetry snapshot, never by reading gateway state directly.
+    [[nodiscard]] uint64_t fill_report_count() const noexcept {
+        return _fill_report_count;
+    }
+
+    // A bounded I/O subscriber queue may reject a notification under
+    // sustained overload. The execution itself remains reconciled; retain a
+    // fixed-cost owner-thread diagnostic rather than retrying or blocking.
+    [[nodiscard]] uint64_t dropped_fill_notifications() const noexcept {
+        return _dropped_fill_notifications;
     }
 
     [[nodiscard]] exec::RiskDecision try_build(
@@ -447,6 +473,11 @@ public:
         }
         if (!capacity_ok) {
             _rate_limiter.release();
+            // Capacity exhaustion is an admission rejection just like a
+            // failed pre-trade limit.  Count it on the execution owner so
+            // the live Prometheus rejection total includes this fail-closed
+            // path as well.
+            ++_arena->exec_states[intent.symbol_idx].risk.reject_count;
             _arena->exec_states[intent.symbol_idx].risk.halted = 1;
             packet.len = 0;
             return decision;
@@ -605,6 +636,11 @@ public:
         _recovery_ledger = ledger;
     }
 
+    void set_fill_event_callback(FillEventCallback callback, void* context) noexcept {
+        _fill_callback = callback;
+        _fill_context = context;
+    }
+
     [[nodiscard]] bool apply_execution_report(
         uint16_t symbol, const ExecutionReport& report) noexcept {
         if (!_arena || symbol >= Config::kSymbols) {
@@ -628,10 +664,16 @@ public:
                 _breaker.trip();
                 return false;
             }
+            const int64_t remaining_quantity =
+                order.qty - report.filled_quantity;
 
+            const RecoveryEventType recovery_event =
+                report.terminal && remaining_quantity > 0
+                    ? RecoveryEventType::kTerminalFill
+                    : RecoveryEventType::kFill;
             if (_recovery_ledger &&
                 !_recovery_ledger->append_and_flush(RecoveryEvent{
-                    RecoveryEventType::kFill,
+                    recovery_event,
                     order.order_id,
                     static_cast<int64_t>(report.filled_quantity),
                     order.price,
@@ -641,7 +683,6 @@ public:
                 _breaker.trip();
                 return false;
             }
-
             if (!_reconciliation.apply(report)) {
                 state.risk.halted = 1;
                 _breaker.trip();
@@ -649,8 +690,25 @@ public:
             }
 
             order.filled_qty += report.filled_quantity;
-            order.qty -= report.filled_quantity;
+            order.qty = remaining_quantity;
+            ++_fill_report_count;
+            if (_fill_callback) {
+                if (!_fill_callback(_fill_context, FillEvent{order.order_id,
+                    order.filled_qty, order.price, next_utc_fill_timestamp_ns()})) {
+                    ++_dropped_fill_notifications;
+                }
+            }
             if (report.terminal || order.qty == 0) {
+                // The risk state reserves the complete accepted quantity.
+                // A terminal venue report can legitimately carry a partial
+                // fill (the venue cancels the remainder), so remove only the
+                // still-open reservation while retaining filled_qty/qty in
+                // the terminal snapshot for audit/query visibility.
+                if (report.terminal && order.qty > 0) {
+                    state.risk.net_position -=
+                        exec::signed_qty_delta(order.side, order.qty);
+                    state.risk.gross_exposure -= order.price * order.qty;
+                }
                 order.state = 3;
                 if (state.risk.order_count > 0) --state.risk.order_count;
                 _rate_limiter.release();
@@ -675,6 +733,10 @@ public:
         SymbolExecState& state = _arena->exec_states[symbol];
         for (ActiveOrder& order : state.orders) {
             if (order.order_id != order_id || order.state == 0) continue;
+            // Terminal orders are immutable history. A delayed duplicate
+            // cancel is a harmless not-found result, not a reconciliation
+            // failure that should halt the symbol or trip the breaker.
+            if (order.state == 3) return false;
 
             if (!_reconciliation.contains(order_id)) {
                 state.risk.halted = 1;
@@ -701,6 +763,14 @@ public:
                 return false;
             }
 
+            // reserve_order_slot() includes the still-open quantity in the
+            // projected position and exposure.  A cancel only removes that
+            // remaining reservation; prior partial fills stay represented in
+            // the settled position.  Clearing the slot without this reversal
+            // would make each REST cancel permanently consume risk capacity.
+            state.risk.net_position -=
+                exec::signed_qty_delta(order.side, order.qty);
+            state.risk.gross_exposure -= order.price * order.qty;
             order = ActiveOrder{};
             if (state.risk.order_count > 0) --state.risk.order_count;
             _rate_limiter.release();
@@ -787,26 +857,88 @@ public:
             return false;
         }
         SymbolExecState& state = _arena->exec_states[symbol];
+        ActiveOrder* matching_order = nullptr;
+        for (ActiveOrder& order : state.orders) {
+            if (order.order_id != order_id || order.state == 0) continue;
+            // A late venue reject for a terminal fill/cancel is stale
+            // control-plane traffic.  It must not count as a new rejection,
+            // release settled risk a second time, or trip the breaker.
+            if (order.state == 3) return false;
+            matching_order = &order;
+            break;
+        }
         ++state.risk.reject_count;
         _breaker.record_rejection(now_ns());
         if (state.risk.reject_count >= _risk.limits(symbol).max_consecutive_rejections) {
             state.risk.halted = 1;
         }
-        for (ActiveOrder& order : state.orders) {
-            if (order.order_id == order_id && order.state != 0) {
-                (void)_reconciliation.cancel(order_id);
-                state.risk.net_position -= exec::signed_qty_delta(order.side, order.qty);
-                state.risk.gross_exposure -= order.price * order.qty;
-                if (state.risk.order_count > 0) --state.risk.order_count;
-                order = ActiveOrder{};
-                _rate_limiter.release();
-                return true;
+        if (matching_order) {
+            (void)_reconciliation.cancel(order_id);
+            state.risk.net_position -=
+                exec::signed_qty_delta(matching_order->side, matching_order->qty);
+            state.risk.gross_exposure -=
+                matching_order->price * matching_order->qty;
+            if (state.risk.order_count > 0) --state.risk.order_count;
+            *matching_order = ActiveOrder{};
+            _rate_limiter.release();
+            return true;
+        }
+        return false;
+    }
+
+    // Control-plane snapshots. These remain execution-thread-owned: callers
+    // on another thread must use a queue rather than read arena state.
+    [[nodiscard]] bool query_order(uint64_t order_id, ActiveOrder& output) const noexcept {
+        if (!_arena || order_id == 0) return false;
+        for (uint16_t symbol = 0; symbol < Config::kSymbols; ++symbol) {
+            const SymbolExecState& state = _arena->exec_states[symbol];
+            for (const ActiveOrder& order : state.orders) {
+                if (order.order_id == order_id && order.state != 0) {
+                    output = order;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool query_position(uint16_t symbol, RiskState& output) const noexcept {
+        if (!_arena || symbol >= Config::kSymbols) return false;
+        output = _arena->exec_states[symbol].risk;
+        return true;
+    }
+
+    // This is a simulator-local cancellation. A live venue adapter must emit
+    // a cancel message and await its acknowledgement instead.
+    [[nodiscard]] bool cancel_order(uint64_t order_id) noexcept {
+        if (!_arena || order_id == 0) return false;
+        for (uint16_t symbol = 0; symbol < Config::kSymbols; ++symbol) {
+            for (const ActiveOrder& order : _arena->exec_states[symbol].orders) {
+                if (order.order_id == order_id && order.state != 0 &&
+                    order.state != 3)
+                    return apply_cancel_report(symbol, order_id);
             }
         }
         return false;
     }
 
 private:
+    // Fill notifications leave the process boundary, so unlike internal
+    // duration/risk clocks this is an epoch-based UTC timestamp.  The
+    // execution gateway is single-thread-owned, which lets us clamp a rare
+    // wall-clock correction without exposing a non-monotonic public stream.
+    uint64_t next_utc_fill_timestamp_ns() noexcept {
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        uint64_t timestamp = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+        if (timestamp <= _last_fill_timestamp_ns &&
+            _last_fill_timestamp_ns != UINT64_MAX) {
+            timestamp = _last_fill_timestamp_ns + 1U;
+        }
+        _last_fill_timestamp_ns = timestamp;
+        return timestamp;
+    }
+
     static uint64_t now_ns() noexcept {
         const auto now = std::chrono::steady_clock::now().time_since_epoch();
         return static_cast<uint64_t>(
@@ -866,6 +998,11 @@ private:
     OrderRateLimiter _rate_limiter;
     DurableAuditLog* _audit_log = nullptr;
     RecoveryLedger* _recovery_ledger = nullptr;
+    FillEventCallback _fill_callback = nullptr;
+    void* _fill_context = nullptr;
+    uint64_t _last_fill_timestamp_ns = 0;
+    uint64_t _fill_report_count = 0;
+    uint64_t _dropped_fill_notifications = 0;
 };
 
 template <size_t MaxTriggers = 1024>

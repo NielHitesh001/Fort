@@ -18,8 +18,15 @@ enum class RecoveryEventType : uint8_t {
     kAck = 4,
     kNew = 5,
     kReplace = 6,
+    // One durable record for a terminal report that executes only part of
+    // the remaining quantity and cancels the balance. This avoids a
+    // crash-visible Fill/Cancel two-record gap during replay.
+    kTerminalFill = 7,
 };
 
+// kTerminalFill uses an unused event value while retaining the v2, 64-byte
+// record layout. New readers continue to replay existing Add/Fill/Cancel WALs;
+// deploy a reader that recognizes this event before a writer emits it.
 constexpr uint8_t kRecoveryRecordVersion = 2;
 
 struct RecoveryEvent {
@@ -227,6 +234,15 @@ private:
             return true;
         }
         if (index == count) return false;
+        if (record.type == static_cast<uint8_t>(RecoveryEventType::kTerminalFill)) {
+            // The terminal report's fill quantity remains useful for audit,
+            // but recovery must retire the complete order atomically: the
+            // venue has also cancelled its unfilled remainder.
+            if (record.quantity <= 0 ||
+                record.quantity > output[index].remaining) return false;
+            remove(output, count, index);
+            return true;
+        }
         if (record.type == static_cast<uint8_t>(RecoveryEventType::kFill)) {
             if (record.quantity > output[index].remaining) return false;
             output[index].remaining -= record.quantity;

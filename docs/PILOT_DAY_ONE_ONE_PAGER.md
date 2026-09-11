@@ -8,7 +8,7 @@ LUV Flicker is a C++20, simulation-oriented market-data and execution framework 
 
 ```mermaid
 flowchart LR
-    A[Start simulation runtime] --> B[HTTP /metrics on 127.0.0.1:9090]
+    A[Start simulation runtime] --> B[Authenticated HTTP /metrics on 0.0.0.0:9090]
     B --> C[Prometheus scrape]
     C --> D[Grafana dashboard]
     B --> E[Direct curl verification]
@@ -20,13 +20,15 @@ flowchart LR
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j2
-./build/main_engine --metrics
+./build/luv_engine --http-port 8080 --prometheus-port 9090 \
+  --api-token 'pilot-api-token' --metrics-token 'pilot-metrics-token'
 ```
 
 Verify the live surface:
 
 ```sh
-curl http://127.0.0.1:9090/metrics
+curl -H 'Authorization: Bearer pilot-metrics-token' \
+  http://127.0.0.1:9090/metrics
 ```
 
 Then use:
@@ -47,7 +49,10 @@ The endpoint exposes the core runtime signals needed for a first pilot:
 - risk-check latency
 - halted state through the runtime telemetry model
 
-In the verified local run, a live scrape returned `luv_active_orders 64` and `luv_risk_ns 99.000` while the process was running. The process then shut down cleanly after `Ctrl-C`, reporting 740 processed orders.
+`/metrics` is intentionally bearer-protected; an unauthenticated request
+returns `401`. The separate `/healthz` endpoint is unauthenticated only for
+orchestrator liveness and readiness checks. The process shuts down cleanly
+after `Ctrl-C`.
 
 ## Evidence available today
 

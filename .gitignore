@@ -19,3 +19,7 @@
 # Local dependency directories and editor metadata
 /node_modules/
 .DS_Store
+
+# Local runtime secrets and simulator persistence.
+/secrets/
+/data/

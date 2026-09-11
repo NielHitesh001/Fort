@@ -1,21 +1,36 @@
-version: '3.8'
-
 services:
   luv-engine:
     build:
       context: .
       dockerfile: Dockerfile.dpdk
     container_name: luv_engine
-    privileged: true
+    command:
+      - --messages
+      - "500000"
+      - --http-port
+      - "8080"
+      - --prometheus-port
+      - "9090"
+      - --api-token-file
+      - /run/secrets/fort-api-auth/api-token
+      - --metrics-token-file
+      - /run/secrets/fort-metrics-auth/metrics-token
     environment:
-      - LUV_ENV=staging
-      - LUV_MESSAGES=500000
+      LUV_ENV: staging
     ports:
-      - "9100:9100"
       - "8080:8080"
+      # Prometheus owns host port 9090 below.  The engine itself listens on
+      # container port 9090 and is scraped over the compose network.
+      - "9100:9090"
     volumes:
       - ./data/audit:/var/log/luv/audit
       - ./data/wal:/var/log/luv/wal
+      # Create this untracked file before `docker compose up`; it is never
+      # expanded into the engine process argv or environment.
+      - ./secrets/fort-api-token:/run/secrets/fort-api-auth/api-token:ro
+      # The metrics bearer is intentionally distinct from the order-control
+      # bearer so a Prometheus scrape cannot submit or cancel orders.
+      - ./secrets/fort-metrics-token:/run/secrets/fort-metrics-auth/metrics-token:ro
     networks:
       - luv-network
 
@@ -24,6 +39,8 @@ services:
     container_name: luv_prometheus
     volumes:
       - ./docs/prometheus_luv_scrape.yml:/etc/prometheus/prometheus.yml:ro
+      # Prometheus receives only the least-privilege metrics bearer.
+      - ./secrets/fort-metrics-token:/etc/prometheus/secrets/fort-metrics-auth/metrics-token:ro
     ports:
       - "9090:9090"
     depends_on:
@@ -37,10 +54,12 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/fort-grafana-admin/password
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - ./docs/grafana_luv_dashboard.json:/etc/grafana/provisioning/dashboards/luv_dashboard.json:ro
+      # Do not use a checked-in Grafana administrator password.
+      - ./secrets/grafana-admin-password:/run/secrets/fort-grafana-admin/password:ro
     depends_on:
       - prometheus
     networks:

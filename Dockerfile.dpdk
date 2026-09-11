@@ -15,8 +15,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
-# Verify DPDK headers exist
-RUN ls -la /usr/include/dpdk/ | head -10 && \
-    echo "DPDK headers found"
+# Build the simulator/runtime into the image.  The default packet-I/O build
+# stays portable here; DPDK can be enabled explicitly by a specialized image
+# build when the target host provides its required hugepage/device setup.
+COPY . .
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DLUV_ENABLE_DPDK=OFF && \
+    cmake --build build --target luv_engine --parallel 4 && \
+    install -m 0755 build/luv_engine /usr/local/bin/luv_engine
 
-CMD ["/bin/bash"]
+ENTRYPOINT ["/usr/local/bin/luv_engine"]
