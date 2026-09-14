@@ -79,9 +79,12 @@ public:
             if (!eq) break;
 
             uint32_t tag = 0;
+            if (eq == tag_start) return false;
             for (const char* t = tag_start; t < eq; ++t) {
                 if (*t < '0' || *t > '9') return false;
-                tag = tag * 10 + static_cast<uint32_t>(*t - '0');
+                const uint32_t digit = static_cast<uint32_t>(*t - '0');
+                if (tag > (UINT32_MAX - digit) / 10U) return false;
+                tag = tag * 10U + digit;
             }
 
             const char* val_start = eq + 1;
@@ -111,15 +114,20 @@ public:
     int64_t get_int(uint32_t tag, int64_t default_val = 0) const noexcept {
         auto sv = get(tag);
         if (sv.empty()) return default_val;
-        int64_t val = 0;
+        uint64_t val = 0;
         bool neg = false;
         size_t idx = 0;
         if (sv[0] == '-') { neg = true; idx = 1; }
+        if (idx == sv.size()) return default_val;
+        const uint64_t limit = static_cast<uint64_t>(INT64_MAX) + (neg ? 1U : 0U);
         for (; idx < sv.size(); ++idx) {
-            if (sv[idx] < '0' || sv[idx] > '9') break;
-            val = val * 10 + (sv[idx] - '0');
+            if (sv[idx] < '0' || sv[idx] > '9') return default_val;
+            const uint64_t digit = static_cast<uint64_t>(sv[idx] - '0');
+            if (val > (limit - digit) / 10U) return default_val;
+            val = val * 10U + digit;
         }
-        return neg ? -val : val;
+        if (neg && val == static_cast<uint64_t>(INT64_MAX) + 1U) return INT64_MIN;
+        return neg ? -static_cast<int64_t>(val) : static_cast<int64_t>(val);
     }
 
     char get_char(uint32_t tag, char default_val = '\0') const noexcept {

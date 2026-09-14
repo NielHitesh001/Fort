@@ -9,6 +9,8 @@ option(LUV_ENABLE_ASAN_UBSAN
     "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(LUV_ENABLE_TSAN
     "Enable ThreadSanitizer" OFF)
+option(LUV_ENABLE_FUZZING "Build Clang libFuzzer parser targets" OFF)
+option(LUV_ENABLE_SIGN_CONVERSION_WARNINGS "Audit implicit sign conversions" OFF)
 option(LUV_ENABLE_LONG_STRESS_TESTS
     "Include the long stress test in CTest" OFF)
 set(LUV_STRESS_MESSAGES 250000 CACHE STRING
@@ -45,6 +47,21 @@ target_include_directories(luv_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(luv_core INTERFACE packet_io OpenSSL::Crypto)
 target_compile_options(luv_core INTERFACE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-O3;-Wall;-Wextra;-Wpedantic>)
+if(LUV_ENABLE_SIGN_CONVERSION_WARNINGS)
+    target_compile_options(luv_core INTERFACE
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wsign-conversion>)
+endif()
+if(LUV_ENABLE_FUZZING)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR LUV_ENABLE_TSAN)
+        message(FATAL_ERROR "Fuzzing requires Clang with libFuzzer and no TSan")
+    endif()
+    foreach(parser itch ouch fix)
+        add_executable(fuzz_${parser} fuzz/fuzz_${parser}.cpp)
+        target_link_libraries(fuzz_${parser} PRIVATE luv_core Threads::Threads)
+        target_compile_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer,address,undefined)
+        target_link_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer,address,undefined)
+    endforeach()
+endif()
 if(LUV_ENABLE_ASAN_UBSAN)
     target_compile_options(luv_core INTERFACE
         $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fsanitize=address,undefined;-fno-omit-frame-pointer>)
@@ -103,6 +120,7 @@ set(LUV_TESTS
     amihud_pastor_stambaugh
     amm_liquidity
     arena
+    arena_exhaustion_recovery
     as_mm
     ats_n
     auction
@@ -125,6 +143,7 @@ set(LUV_TESTS
     collar
     collateral
     compliance_aml
+    compliance_arithmetic_boundaries
     concurrency
     contingent_orders
     corporate_actions
@@ -149,9 +168,11 @@ set(LUV_TESTS
     factor_stress
     fast_decoder
     feed
+    feed_disconnect_partial_fill
     financing
     finra_4210
     fix_protocol
+    fix_numeric_boundaries
     form_13f
     form_pf
     fx_forward

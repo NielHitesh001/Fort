@@ -21,6 +21,7 @@ struct NetCapitalPosition {
 };
 
 struct NetCapitalResult {
+    bool arithmetic_valid{false};
     uint64_t allowable_assets{0};
     uint64_t total_deductions{0};
     uint64_t tentative_net_capital{0};
@@ -28,7 +29,7 @@ struct NetCapitalResult {
     uint64_t net_capital{0};
     uint64_t required_minimum_net_capital{0};
     uint64_t excess_net_capital{0};
-    bool is_compliant{true};
+    bool is_compliant{false};
     bool is_early_warning{false}; // Net Capital < 120% of minimum requirement
 };
 
@@ -45,6 +46,11 @@ public:
         NetCapitalStandard standard = NetCapitalStandard::AggregateIndebtedness) noexcept
     {
         NetCapitalResult res;
+        if (!positions && position_count != 0) return res;
+        // Exact floor(value * percent / 100), without overflowing the product.
+        const auto percent = [](uint64_t value, uint64_t rate) noexcept {
+            return (value / 100U) * rate + ((value % 100U) * rate) / 100U;
+        };
 
         // 1. Tentative Net Capital = Total Assets - Non-Allowable Assets (100% deduction for illiquid/unsecured items)
         res.allowable_assets = (total_assets > non_allowable_assets) ? (total_assets - non_allowable_assets) : 0;
@@ -58,18 +64,18 @@ public:
             uint64_t val = pos.market_value_usd;
 
             if (pos.is_non_marketable) {
-                haircuts += val; // 100% deduction
+                if (__builtin_add_overflow(haircuts, val, &haircuts)) return {};
             } else if (pos.is_equity) {
                 // Standard 15% haircut on equities
-                uint64_t hc = (val * 15) / 100;
+                uint64_t hc = percent(val, 15);
 
                 // Undue concentration charge: additional 15% on amount exceeding 10% of tentative net capital
                 uint64_t ten_pct_tnc = res.tentative_net_capital / 10;
                 if (val > ten_pct_tnc && ten_pct_tnc > 0) {
                     uint64_t excess = val - ten_pct_tnc;
-                    hc += (excess * 15) / 100;
+                    hc += percent(excess, 15); // Sum is at most 30% of UINT64_MAX.
                 }
-                haircuts += hc;
+                if (__builtin_add_overflow(haircuts, hc, &haircuts)) return {};
             } else if (pos.is_treasury) {
                 // Treasury haircut graduated by maturity: <1yr: 0%, 1-3yr: 2%, 3-5yr: 3%, >5yr: 6%
                 uint64_t rate_pct = 0;
@@ -78,7 +84,7 @@ public:
                 else if (pos.treasury_maturity_years >= 1) rate_pct = 2;
                 else rate_pct = 0;
 
-                haircuts += (val * rate_pct) / 100;
+                if (__builtin_add_overflow(haircuts, percent(val, rate_pct), &haircuts)) return {};
             }
         }
 
@@ -89,10 +95,10 @@ public:
         uint64_t ratio_requirement = 0;
         if (standard == NetCapitalStandard::AggregateIndebtedness) {
             // 6 2/3% (approx 1/15th) of Aggregate Indebtedness
-            ratio_requirement = (aggregate_indebtedness_or_debits * 2) / 30; // equivalent to 6.666%
+            ratio_requirement = aggregate_indebtedness_or_debits / 15U;
         } else {
             // 2% of debit items
-            ratio_requirement = (aggregate_indebtedness_or_debits * 2) / 100;
+            ratio_requirement = aggregate_indebtedness_or_debits / 50U;
         }
 
         res.required_minimum_net_capital = std::max(kAbsoluteMinimum, ratio_requirement);
@@ -101,9 +107,11 @@ public:
         res.is_compliant = (res.net_capital >= res.required_minimum_net_capital);
         res.excess_net_capital = res.is_compliant ? (res.net_capital - res.required_minimum_net_capital) : 0;
 
-        uint64_t early_warning_thresh = (res.required_minimum_net_capital * 120) / 100;
+        const uint64_t early_warning_thresh = res.required_minimum_net_capital +
+            res.required_minimum_net_capital / 5U;
         res.is_early_warning = (res.net_capital < early_warning_thresh);
 
+        res.arithmetic_valid = true;
         return res;
     }
 };

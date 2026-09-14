@@ -58,6 +58,9 @@ struct Rule17a5AuditVerification {
 };
 
 struct Rule17a5AuditResult {
+    // False means input or intermediate arithmetic exceeded the supported
+    // signed-dollar domain. No approval flags are valid in that case.
+    bool arithmetic_valid{false};
     int64_t net_worth_usd{0};
     int64_t tentative_net_capital_usd{0};
     int64_t net_capital_usd{0};
@@ -99,17 +102,32 @@ public:
     {
         Rule17a5AuditResult res{};
 
+        const uint64_t inputs[] = {
+            sched.total_assets_usd, sched.total_liabilities_usd,
+            sched.allowable_subordinated_debt_usd, sched.non_allowable_assets_usd,
+            sched.aggregate_indebtedness_usd, sched.aggregate_debit_items_usd,
+            sched.total_haircuts_usd, sched.undue_concentration_charges_usd,
+            sched.gross_securities_revenue_usd, sched.sipc_allowable_deductions_usd};
+        for (const uint64_t input : inputs) {
+            if (input > static_cast<uint64_t>(INT64_MAX)) return res;
+        }
+
         // 1. Net Worth = Total Assets - Total Liabilities
-        res.net_worth_usd = static_cast<int64_t>(sched.total_assets_usd) - static_cast<int64_t>(sched.total_liabilities_usd);
+        if (__builtin_sub_overflow(static_cast<int64_t>(sched.total_assets_usd),
+                static_cast<int64_t>(sched.total_liabilities_usd), &res.net_worth_usd)) return {};
 
         // 2. Tentative Net Capital = Net Worth + Allowable Subordinated Debt - Non-Allowable Assets
-        int64_t capital_base = res.net_worth_usd + static_cast<int64_t>(sched.allowable_subordinated_debt_usd);
-        res.tentative_net_capital_usd = capital_base - static_cast<int64_t>(sched.non_allowable_assets_usd);
+        int64_t capital_base = 0;
+        if (__builtin_add_overflow(res.net_worth_usd,
+                static_cast<int64_t>(sched.allowable_subordinated_debt_usd), &capital_base) ||
+            __builtin_sub_overflow(capital_base,
+                static_cast<int64_t>(sched.non_allowable_assets_usd), &res.tentative_net_capital_usd)) return {};
 
         // 3. Net Capital = Tentative Net Capital - Haircuts - Undue Concentration Charges
-        res.net_capital_usd = res.tentative_net_capital_usd - 
-                              static_cast<int64_t>(sched.total_haircuts_usd) - 
-                              static_cast<int64_t>(sched.undue_concentration_charges_usd);
+        if (__builtin_sub_overflow(res.tentative_net_capital_usd,
+                static_cast<int64_t>(sched.total_haircuts_usd), &res.net_capital_usd) ||
+            __builtin_sub_overflow(res.net_capital_usd,
+                static_cast<int64_t>(sched.undue_concentration_charges_usd), &res.net_capital_usd)) return {};
 
         // 4. Base Minimum Capital requirement by Broker-Dealer classification
         uint64_t base_min_capital = kAbsoluteMinCarrying;
@@ -131,7 +149,8 @@ public:
         // 5. Compute Rule 15c3-1 Required Minimum Net Capital
         if (sched.use_alternative_standard) {
             // Alternative Standard: max(Base Min, 2% of Rule 15c3-3 debit items)
-            uint64_t debit_requirement = static_cast<uint64_t>(std::round(sched.aggregate_debit_items_usd * 0.02));
+            const uint64_t debit_requirement = sched.aggregate_debit_items_usd / 50U +
+                (sched.aggregate_debit_items_usd % 50U >= 25U ? 1U : 0U);
             res.minimum_net_capital_required_usd = std::max(base_min_capital, debit_requirement);
             res.max_allowable_ai_ratio = 0.0; // AI ratio is not applicable under Alternative Standard
             res.is_ai_ratio_compliant = true;
@@ -141,14 +160,15 @@ public:
             // For established BD: min is max(Base Min, 6.67% of AI) [15:1 ratio]
             // For first-year BD: min is max(Base Min, 12.5% of AI) [8:1 ratio]
             res.max_allowable_ai_ratio = sched.is_first_year_operation ? 8.0 : 15.0;
-            double ai_fraction = sched.is_first_year_operation ? 0.125 : (1.0 / 15.0);
-            uint64_t ai_min = static_cast<uint64_t>(std::ceil(sched.aggregate_indebtedness_usd * ai_fraction));
+            const uint64_t divisor = sched.is_first_year_operation ? 8U : 15U;
+            const uint64_t ai_min = sched.aggregate_indebtedness_usd / divisor +
+                (sched.aggregate_indebtedness_usd % divisor != 0 ? 1U : 0U);
             res.minimum_net_capital_required_usd = std::max(base_min_capital, ai_min);
 
             if (res.net_capital_usd > 0) {
                 res.aggregate_indebtedness_ratio = static_cast<double>(sched.aggregate_indebtedness_usd) / 
                                                   static_cast<double>(res.net_capital_usd);
-                res.is_ai_ratio_compliant = (res.aggregate_indebtedness_ratio <= res.max_allowable_ai_ratio);
+                res.is_ai_ratio_compliant = static_cast<uint64_t>(res.net_capital_usd) >= ai_min;
             } else {
                 res.aggregate_indebtedness_ratio = (sched.aggregate_indebtedness_usd > 0) ? 999.99 : 0.0;
                 res.is_ai_ratio_compliant = (sched.aggregate_indebtedness_usd == 0);
@@ -156,11 +176,13 @@ public:
         }
 
         // 6. Excess Net Capital
-        res.excess_net_capital_usd = res.net_capital_usd - static_cast<int64_t>(res.minimum_net_capital_required_usd);
+        if (__builtin_sub_overflow(res.net_capital_usd,
+                static_cast<int64_t>(res.minimum_net_capital_required_usd), &res.excess_net_capital_usd)) return {};
         res.is_net_capital_compliant = (res.excess_net_capital_usd >= 0);
 
         // 7. Rule 17a-11 Early Warning & Telegraphic Notice Thresholds
-        uint64_t early_warning_threshold = static_cast<uint64_t>(res.minimum_net_capital_required_usd * 1.20);
+        const uint64_t early_warning_threshold = res.minimum_net_capital_required_usd +
+            res.minimum_net_capital_required_usd / 5U;
         double early_warning_ai_limit = sched.is_first_year_operation ? 6.4 : 12.0;
 
         if (res.net_capital_usd < static_cast<int64_t>(early_warning_threshold)) {
@@ -180,7 +202,8 @@ public:
         } else {
             res.sipc_net_operating_revenue_usd = 0;
         }
-        res.sipc_assessment_fee_usd = static_cast<uint64_t>(std::round(res.sipc_net_operating_revenue_usd * kSipcAssessmentRate));
+        res.sipc_assessment_fee_usd = (res.sipc_net_operating_revenue_usd / 2000U) * 3U +
+            ((res.sipc_net_operating_revenue_usd % 2000U) * 3U + 1000U) / 2000U;
 
         // 9. Compliance Bitmask and Filing Approval
         if (audit.audit_opinion == AuditOpinionType::Unqualified) {
@@ -215,6 +238,7 @@ public:
                                        !audit.has_reconciliation_material_difference &&
                                        !res.is_rule_17a11_critical_telegraphic_notice;
 
+        res.arithmetic_valid = true;
         return res;
     }
 };

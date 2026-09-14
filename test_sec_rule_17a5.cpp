@@ -111,6 +111,48 @@ void test_alternative_standard_debit_items() {
 }
 
 int main() {
+    Rule17a5FinancialSchedule boundary{};
+    Rule17a5AuditVerification audit{};
+    assert(SecRule17a5AuditEngine::evaluate_filing(boundary, audit).arithmetic_valid);
+    using Field = uint64_t Rule17a5FinancialSchedule::*;
+    const Field fields[] = {
+        &Rule17a5FinancialSchedule::total_assets_usd,
+        &Rule17a5FinancialSchedule::total_liabilities_usd,
+        &Rule17a5FinancialSchedule::allowable_subordinated_debt_usd,
+        &Rule17a5FinancialSchedule::non_allowable_assets_usd,
+        &Rule17a5FinancialSchedule::aggregate_indebtedness_usd,
+        &Rule17a5FinancialSchedule::aggregate_debit_items_usd,
+        &Rule17a5FinancialSchedule::total_haircuts_usd,
+        &Rule17a5FinancialSchedule::undue_concentration_charges_usd,
+        &Rule17a5FinancialSchedule::gross_securities_revenue_usd,
+        &Rule17a5FinancialSchedule::sipc_allowable_deductions_usd};
+    for (const Field field : fields) {
+        boundary = {};
+        boundary.*field = UINT64_MAX;
+        const auto result = SecRule17a5AuditEngine::evaluate_filing(boundary, audit);
+        assert(!result.arithmetic_valid && !result.is_audit_filing_approved);
+        boundary.*field = static_cast<uint64_t>(INT64_MAX) + 1U;
+        assert(!SecRule17a5AuditEngine::evaluate_filing(boundary, audit).arithmetic_valid);
+    }
+    boundary = {};
+    boundary.total_assets_usd = INT64_MAX;
+    assert(SecRule17a5AuditEngine::evaluate_filing(boundary, audit).arithmetic_valid);
+    boundary.allowable_subordinated_debt_usd = 1;
+    assert(!SecRule17a5AuditEngine::evaluate_filing(boundary, audit).arithmetic_valid);
+    boundary = {};
+    boundary.total_liabilities_usd = INT64_MAX;
+    boundary.non_allowable_assets_usd = 1; // INT64_MIN before excess subtraction.
+    assert(!SecRule17a5AuditEngine::evaluate_filing(boundary, audit).arithmetic_valid);
+    boundary.non_allowable_assets_usd = 2;
+    assert(!SecRule17a5AuditEngine::evaluate_filing(boundary, audit).arithmetic_valid);
+    boundary = {};
+    boundary.total_assets_usd = INT64_MAX;
+    boundary.aggregate_indebtedness_usd = INT64_MAX;
+    boundary.gross_securities_revenue_usd = INT64_MAX;
+    auto exact = SecRule17a5AuditEngine::evaluate_filing(boundary, audit);
+    assert(exact.arithmetic_valid);
+    assert(exact.minimum_net_capital_required_usd == 614891469123651721ULL);
+    assert(exact.sipc_assessment_fee_usd == 13835058055282164ULL);
     test_carrying_bd_compliant_ai_standard();
     test_first_year_and_early_warning_triggers();
     test_alternative_standard_debit_items();

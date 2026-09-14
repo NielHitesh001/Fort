@@ -2,6 +2,11 @@
 
 ## Goal
 
+All outreach describes Fort as a research trading simulator. Proposed pilots are
+controlled synthetic evaluations; no live-capital, regulatory-compliance, immutable
+audit-storage or latency SLA claim is established. Keep populated contact notes in
+private storage. Templates below are drafts, not messages sent to prospects.
+
 Secure one warm intro and one discovery call with a prospect in the target list within the first 4 days.
 
 ## Targets
@@ -63,7 +68,7 @@ Listen for:
 Ground the problem in operational value.
 
 ### Question 3
-"If you could see the live ITCH feed plus a reliable audit trail in real time, what would you do differently?"
+"Would a simulated ITCH order-book demonstration and local integrity-checked logs help you evaluate this workflow?"
 
 Listen for:
 - strategy execution

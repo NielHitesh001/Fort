@@ -3,7 +3,7 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![CMake](https://img.shields.io/badge/CMake-3.20+-green.svg)](https://cmake.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-151%20Passing-brightgreen.svg)](tests/)
+[![CI](https://github.com/NielHitesh001/Fort/actions/workflows/ci.yml/badge.svg)](https://github.com/NielHitesh001/Fort/actions/workflows/ci.yml)
 
 ---
 
@@ -59,7 +59,7 @@ cd Fort
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 
-# Run all 151 test suites
+# Run the configured test suites
 ctest --test-dir build --output-on-failure
 
 # Run the in-memory latency benchmark
@@ -72,14 +72,19 @@ For detailed build instructions, sanitizers (ASan/UBSan), and platform-specific 
 
 ## Performance Notes
 
-In local in-memory simulation benchmarks on modern multi-core processors:
-- **LOB Order Operations**: $\approx 30 - 85\text{ ns}$ (p50 / p99)
-- **ITCH 5.0 Message Parse**: $\approx 15 - 35\text{ ns}$
-- **Live Tree Inference**: $\approx 35 - 75\text{ ns}$
-- **Telemetry Recording**: $\approx 8 - 15\text{ ns}$
+Fort includes local simulation benchmarks, but the previously advertised latency
+figures lack retained host-specific evidence and are withdrawn. Local computation
+timings do not establish feed-to-exchange latency or a service-level guarantee.
 
-> [!NOTE]
-> These figures measure **local in-memory computation only** in simulation mode. Real-world end-to-end trading latency includes network transit, optical fiber propagation, kernel socket handling, and exchange matching queueing ($\approx 50 - 500\,\mu\text{s}$). See [**docs/BENCHMARKING.md**](docs/BENCHMARKING.md) for a complete latency breakdown.
+Build `luv_latency_benchmark` and run `./build/luv_latency_benchmark` on your own
+test hardware. See [benchmark methodology](docs/BENCHMARKING.md), the
+[claim audit](docs/PERFORMANCE_AUDIT_FINDINGS.md), and the unresolved
+[WebSocket burst-latency issue](docs/KNOWN_ISSUES.md#websocket-burst-latency).
+
+See [architecture and scope](docs/ARCHITECTURE_AND_SCOPE.md) for runtime integration
+boundaries and the [external review roadmap](docs/EXTERNAL_REVIEW_ROADMAP.md) for
+proposed evidence gates. Review dates and budgets require owner approval and quotes;
+they are not commitments or certifications.
 
 ---
 

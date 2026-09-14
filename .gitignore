@@ -23,3 +23,9 @@
 # Local runtime secrets and simulator persistence.
 /secrets/
 /data/
+
+# Historical business documents: keep future working copies private.
+/goldman_outreach_package.md
+/attorney_pipeline_template.csv
+/warm_intro_targets_template.csv
+/INVESTOR_READINESS_BRIEF.md
