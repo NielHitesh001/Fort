@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#include <cstring>
 
 int main() {
     std::cout << "[TEST] Starting Covered Interest Parity (CIP) Engine Tests..." << std::endl;

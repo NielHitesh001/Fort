@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#include <cstring>
 
 int main() {
     std::cout << "[TEST] Starting Cross-Currency FX Triangular Arbitrage Tests..." << std::endl;

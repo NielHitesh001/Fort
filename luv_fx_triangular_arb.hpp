@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cmath>
+#include <cstring>
 #include <array>
 #include <algorithm>
 #include <string_view>

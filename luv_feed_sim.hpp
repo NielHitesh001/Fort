@@ -218,10 +218,10 @@ private:
             _ns_per_msg = 1'000'000'000ULL / _cfg.target_rate_hz;
         }
 
-        // Populate symbol table with the same "S###    " tickers we generate
+        // Populate symbol table with the same fixed-width ITCH tickers we generate.
         for (uint32_t i = 0; i < _cfg.synthetic_symbols; ++i) {
-            char ticker[9] = "        ";
-            std::snprintf(ticker, sizeof(ticker), "S%03u    ", i);
+            char ticker[9]{};
+            format_stock(ticker, i);
             (void)_symbols.insert(ticker, static_cast<uint16_t>(i));
         }
 
@@ -364,6 +364,15 @@ private:
         p[7] = static_cast<uint8_t>(v);
     }
 
+    static void format_stock(char (&stock)[9], uint32_t symbol_index) noexcept {
+        stock[0] = 'S';
+        for (size_t offset = 8; offset-- > 1;) {
+            stock[offset] = static_cast<char>('0' + (symbol_index % 10U));
+            symbol_index /= 10U;
+        }
+        stock[8] = '\0';
+    }
+
     // Write the common ITCH header: msg_type, stock_locate, tracking_num, timestamp
     void write_itch_header(uint8_t* dst, uint8_t msg_type, uint16_t locate,
                            uint64_t ts) noexcept {
@@ -388,11 +397,9 @@ private:
             _rng.uniform(_cfg.min_qty, _cfg.max_qty));
         put_u32_be(dst + 20, shares);
 
-        // Stock symbol — 8 bytes, ASCII, space-padded
-        // Use "SYMnnnnn" pattern so symbols are identifiable
-        char stock[9] = "        ";
-        int n = std::snprintf(stock, sizeof(stock), "S%03u    ", sym_idx);
-        (void)n;
+        // Stock symbol — exactly 8 ASCII bytes.
+        char stock[9]{};
+        format_stock(stock, sym_idx);
         std::memcpy(dst + 24, stock, 8);
 
         const uint32_t price = static_cast<uint32_t>(

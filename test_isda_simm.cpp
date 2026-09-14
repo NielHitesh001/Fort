@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#include <cstring>
 
 int main() {
     std::cout << "[TEST] Starting ISDA SIMM v2.6 Margin Calculator Tests..." << std::endl;

@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdio>
+#include <memory>
 #include <random>
 #include <vector>
 
