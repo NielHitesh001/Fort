@@ -319,8 +319,9 @@ namespace itch {
     const uint64_t timestamp = detail::be_timestamp48(raw + 5);
     if (timestamp >= 86'400'000'000'000ULL) [[unlikely]] return false;
 
-    // Zero the output struct in one shot (64 bytes, one cache line)
-    std::memset(&out, 0, sizeof(TickMsg));
+    // TickMsg has default member initializers; value-initialize it rather than
+    // byte-clearing a non-trivial object.
+    out = TickMsg{};
     out.msg_type  = msg_type;
     out.timestamp = timestamp;
 

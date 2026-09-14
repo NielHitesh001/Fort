@@ -25,7 +25,7 @@
 #if defined(__APPLE__)
 #include <CommonCrypto/CommonDigest.h>
 #else
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #endif
 
 namespace luv {
@@ -57,6 +57,24 @@ struct AuditManifestCheckpoint {
     uint8_t manifest_hash[32]{};
 };
 static_assert(sizeof(AuditManifestCheckpoint) == 144, "Manifest record layout changed");
+
+#if !defined(__APPLE__)
+[[nodiscard]] inline bool sha256(const void* first, size_t first_size,
+                                 const void* second, size_t second_size,
+                                 uint8_t output[32]) noexcept {
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
+    if (!context) return false;
+    unsigned int output_size = 0;
+    const bool success =
+        EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 1 &&
+        EVP_DigestUpdate(context, first, first_size) == 1 &&
+        (second_size == 0 || EVP_DigestUpdate(context, second, second_size) == 1) &&
+        EVP_DigestFinal_ex(context, output, &output_size) == 1 &&
+        output_size == 32;
+    EVP_MD_CTX_free(context);
+    return success;
+}
+#endif
 
 class DurableAuditLog {
 public:
@@ -215,12 +233,10 @@ public:
                          sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash));
         CC_SHA256_Final(event.hash, &ctx);
 #else
-        SHA256_CTX ctx;
-        SHA256_Init(&ctx);
-        SHA256_Update(&ctx, event.previous_hash, sizeof(event.previous_hash));
-        SHA256_Update(&ctx, &event.sequence,
-                      sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash));
-        SHA256_Final(event.hash, &ctx);
+        if (!sha256(event.previous_hash, sizeof(event.previous_hash),
+                    &event.sequence,
+                    sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash),
+                    event.hash)) return false;
 #endif
 
         if (!write_all(&event, sizeof(event))) return false;
@@ -261,10 +277,9 @@ public:
         CC_SHA256_Update(&ctx, &checkpoint, offsetof(AuditManifestCheckpoint, manifest_hash));
         CC_SHA256_Final(checkpoint.manifest_hash, &ctx);
 #else
-        SHA256_CTX ctx;
-        SHA256_Init(&ctx);
-        SHA256_Update(&ctx, &checkpoint, offsetof(AuditManifestCheckpoint, manifest_hash));
-        SHA256_Final(checkpoint.manifest_hash, &ctx);
+        if (!sha256(&checkpoint,
+                    offsetof(AuditManifestCheckpoint, manifest_hash), nullptr, 0,
+                    checkpoint.manifest_hash)) return false;
 #endif
 
         int mfd = ::open(manifest_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
@@ -295,10 +310,9 @@ public:
         CC_SHA256_Update(&ctx, &checkpoint, offsetof(AuditManifestCheckpoint, manifest_hash));
         CC_SHA256_Final(expected_mhash, &ctx);
 #else
-        SHA256_CTX ctx;
-        SHA256_Init(&ctx);
-        SHA256_Update(&ctx, &checkpoint, offsetof(AuditManifestCheckpoint, manifest_hash));
-        SHA256_Final(expected_mhash, &ctx);
+        if (!sha256(&checkpoint,
+                    offsetof(AuditManifestCheckpoint, manifest_hash), nullptr, 0,
+                    expected_mhash)) return false;
 #endif
         if (std::memcmp(expected_mhash, checkpoint.manifest_hash, 32) != 0) return false;
 
@@ -380,12 +394,10 @@ private:
         return std::memcmp(expected.data(), event.hash, expected.size()) == 0;
 #else
         std::array<uint8_t, 32> expected{};
-        SHA256_CTX ctx;
-        SHA256_Init(&ctx);
-        SHA256_Update(&ctx, event.previous_hash, sizeof(event.previous_hash));
-        SHA256_Update(&ctx, &event.sequence,
-                      sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash));
-        SHA256_Final(expected.data(), &ctx);
+        if (!sha256(event.previous_hash, sizeof(event.previous_hash),
+                    &event.sequence,
+                    sizeof(event) - sizeof(event.hash) - sizeof(event.previous_hash),
+                    expected.data())) return false;
         return std::memcmp(expected.data(), event.hash, expected.size()) == 0;
 #endif
     }

@@ -360,8 +360,9 @@ public:
 
         if (!_order_map.init()) return false;
 
-        // Zero out per-symbol metadata
-        std::memset(_meta, 0, sizeof(_meta));
+        // SymbolMeta has default member initializers, so reset each object
+        // rather than byte-clearing a non-trivial array.
+        for (auto& meta : _meta) meta = SymbolMeta{};
 
         // Zero out statistics
         _stat_adds     = 0;
