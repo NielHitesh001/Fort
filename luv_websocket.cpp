@@ -603,11 +603,6 @@ void Server::drain_worker_signal() noexcept {
 }
 
 void Server::refresh_poll_interest(Connection& connection) noexcept {
-#if defined(__APPLE__)
-    // kqueue owns readiness registration on macOS. Fresh output is placed on
-    // the worker's fixed flush list and only an EAGAIN path arms EVFILT_WRITE.
-    (void)connection;
-#else
     if (!connections_ || &connection < connections_ ||
         &connection >= connections_ + max_connections_) {
         return;
@@ -621,7 +616,6 @@ void Server::refresh_poll_interest(Connection& connection) noexcept {
         descriptor.events = static_cast<short>(descriptor.events | POLLOUT);
     }
     descriptor.revents = 0;
-#endif
 }
 
 void Server::clear_poll_interest(Connection& connection) noexcept {
@@ -643,12 +637,11 @@ void Server::clear_poll_interest(Connection& connection) noexcept {
         (void)::kevent(event_queue_fd_, changes.data(), change_count, nullptr,
                        0, nullptr);
     }
+#endif
     connection.write_waiting = false;
-#else
     const size_t index = static_cast<size_t>(&connection - connections_) + 1U;
     poll_fds_[index] = {};
     poll_fds_[index].fd = -1;
-#endif
 }
 
 bool Server::register_connection_io(Connection& connection) noexcept {
@@ -693,7 +686,7 @@ bool Server::set_write_interest(Connection& connection,
 void Server::schedule_flush(Connection& connection) noexcept {
 #if defined(__APPLE__)
     if (!connections_ || connection.fd < 0 || connection.flush_queued ||
-        &connection < connections_ || connection >= connections_ + max_connections_) {
+        &connection < connections_ || &connection >= connections_ + max_connections_) {
         return;
     }
     const int32_t index = static_cast<int32_t>(&connection - connections_);
