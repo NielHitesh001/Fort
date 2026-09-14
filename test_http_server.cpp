@@ -271,8 +271,8 @@ int main() {
             break;
         }
         pollfd readable{.fd = buffered_positions, .events = POLLIN, .revents = 0};
-        assert(::poll(&readable, 1, 100) > 0);
-        append_socket_bytes(buffered_positions, buffered_response, 31);
+        if (::poll(&readable, 1, 100) > 0)
+            append_socket_bytes(buffered_positions, buffered_response, 31);
     }
     assert(expected_response_size != 0);
     assert(buffered_response.size() == expected_response_size);

@@ -1198,6 +1198,16 @@ void Server::service_keepalive(Connection& connection,
                                const uint64_t timestamp_ns) noexcept {
     if (connection.fd < 0) return;
 
+    // Poll does not report POLLOUT for a peer whose kernel send buffer is
+    // already full. Make one bounded maintenance-time send attempt so that
+    // EAGAIN arms the no-progress deadline instead of leaving queued output
+    // indefinitely unobserved.
+    if (connection.write_offset != connection.write_size &&
+        connection.write_blocked_since_ns == 0) {
+        (void)flush(connection, timestamp_ns);
+        return;
+    }
+
     if (connection.write_offset != connection.write_size &&
         connection.write_blocked_since_ns != 0 &&
         timestamp_ns - connection.write_blocked_since_ns >=
