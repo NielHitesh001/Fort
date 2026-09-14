@@ -21,18 +21,20 @@ jobs:
           name: macos-websocket-test-log
           path: build/Testing/Temporary/LastTest.log
   parser-fuzz-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Configure libFuzzer
         run: cmake -S . -B build-fuzz -DCMAKE_CXX_COMPILER=clang++ -DLUV_ENABLE_FUZZING=ON
       - name: Build fuzz targets
-        run: cmake --build build-fuzz --target fuzz_itch fuzz_ouch fuzz_fix --parallel 4
+        run: cmake --build build-fuzz --target fuzz_itch fuzz_ouch fuzz_fix fuzz_http fuzz_websocket --parallel 4
       - name: Exercise parsers with sanitizers
         run: |
           ./build-fuzz/fuzz_itch -runs=10000 -max_len=2048
           ./build-fuzz/fuzz_ouch -runs=10000 -max_len=2048
           ./build-fuzz/fuzz_fix -runs=10000 -max_len=2048 fuzz/corpus/fix
+          ./build-fuzz/fuzz_http -runs=10000 -max_len=4096 fuzz/corpus/http
+          ./build-fuzz/fuzz_websocket -runs=10000 -max_len=4096 fuzz/corpus/websocket
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -43,7 +45,7 @@ jobs:
             leak-*
             oom-*
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -54,7 +56,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   sanitizers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -65,7 +67,7 @@ jobs:
         run: ctest --test-dir build-asan --output-on-failure
 
   dpdk-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install DPDK development package

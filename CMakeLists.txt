@@ -55,7 +55,7 @@ if(LUV_ENABLE_FUZZING)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR LUV_ENABLE_TSAN)
         message(FATAL_ERROR "Fuzzing requires Clang with libFuzzer and no TSan")
     endif()
-    foreach(parser itch ouch fix)
+    foreach(parser itch ouch fix http websocket)
         add_executable(fuzz_${parser} fuzz/fuzz_${parser}.cpp)
         target_link_libraries(fuzz_${parser} PRIVATE luv_core Threads::Threads)
         target_compile_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer,address,undefined)
@@ -144,6 +144,7 @@ set(LUV_TESTS
     collateral
     compliance_aml
     compliance_arithmetic_boundaries
+    wire_parse
     concurrency
     contingent_orders
     corporate_actions

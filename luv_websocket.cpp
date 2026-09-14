@@ -1,4 +1,5 @@
 #include "luv_websocket.hpp"
+#include "luv_websocket_parse.hpp"
 
 #include <array>
 #include <cerrno>
@@ -23,7 +24,6 @@ constexpr size_t kWebSocketKeyBytes = 24;
 constexpr size_t kDecodedKeyBytes = 16;
 constexpr size_t kSha1Bytes = 20;
 constexpr size_t kAcceptBytes = 28;
-constexpr size_t kMaxClientFrameHeaderBytes = 14;
 
 [[nodiscard]] uint64_t monotonic_now_ns() noexcept {
     timespec timestamp{};
@@ -89,46 +89,7 @@ template <size_t N>
            append_literal(output, capacity, output_size, "}");
 }
 
-[[nodiscard]] int base64_value(const char value) noexcept {
-    if (value >= 'A' && value <= 'Z') return value - 'A';
-    if (value >= 'a' && value <= 'z') return value - 'a' + 26;
-    if (value >= '0' && value <= '9') return value - '0' + 52;
-    if (value == '+') return 62;
-    if (value == '/') return 63;
-    return -1;
-}
-
-// RFC 6455 requires a base64 representation of exactly 16 random bytes.  The
-// last quartet must therefore be XX== and its unused low bits must be zero.
-[[nodiscard]] bool decode_websocket_key(
-    const char* key, std::array<uint8_t, kDecodedKeyBytes>& decoded) noexcept {
-    if (!key) return false;
-
-    size_t length = 0;
-    while (length <= kWebSocketKeyBytes && key[length] != '\0') ++length;
-    if (length != kWebSocketKeyBytes || key[22] != '=' || key[23] != '=') {
-        return false;
-    }
-
-    size_t output = 0;
-    for (size_t input = 0; input < 20; input += 4) {
-        const int a = base64_value(key[input]);
-        const int b = base64_value(key[input + 1]);
-        const int c = base64_value(key[input + 2]);
-        const int d = base64_value(key[input + 3]);
-        if (a < 0 || b < 0 || c < 0 || d < 0) return false;
-
-        decoded[output++] = static_cast<uint8_t>((a << 2) | (b >> 4));
-        decoded[output++] = static_cast<uint8_t>((b << 4) | (c >> 2));
-        decoded[output++] = static_cast<uint8_t>((c << 6) | d);
-    }
-
-    const int a = base64_value(key[20]);
-    const int b = base64_value(key[21]);
-    if (a < 0 || b < 0 || (b & 0x0F) != 0) return false;
-    decoded[output++] = static_cast<uint8_t>((a << 2) | (b >> 4));
-    return output == decoded.size();
-}
+using wire::decode_websocket_key;
 
 [[nodiscard]] uint32_t rotate_left(const uint32_t value,
                                    const uint32_t bits) noexcept {
@@ -285,53 +246,6 @@ void close_wakeup_fd(int& descriptor) noexcept {
     descriptor = -1;
 }
 
-[[nodiscard]] bool valid_close_code(const uint16_t code) noexcept {
-    if (code >= 3000 && code <= 4999) return true;
-    return code >= 1000 && code <= 1014 && code != 1004 && code != 1005 &&
-           code != 1006;
-}
-
-// RFC 6455 §5.5.1 requires a close reason to be valid UTF-8.  Decode only
-// enough to reject malformed, overlong, surrogate, and out-of-range forms;
-// the payload remains in its fixed connection buffer.
-[[nodiscard]] bool valid_utf8(const char* text, const size_t size) noexcept {
-    if (size != 0 && !text) return false;
-    size_t offset = 0;
-    while (offset < size) {
-        const uint8_t first = static_cast<uint8_t>(text[offset++]);
-        if (first <= 0x7FU) continue;
-
-        uint32_t code_point = 0;
-        uint8_t continuation_count = 0;
-        uint32_t minimum = 0;
-        if ((first & 0xE0U) == 0xC0U) {
-            code_point = first & 0x1FU;
-            continuation_count = 1;
-            minimum = 0x80U;
-        } else if ((first & 0xF0U) == 0xE0U) {
-            code_point = first & 0x0FU;
-            continuation_count = 2;
-            minimum = 0x800U;
-        } else if ((first & 0xF8U) == 0xF0U) {
-            code_point = first & 0x07U;
-            continuation_count = 3;
-            minimum = 0x10000U;
-        } else {
-            return false;
-        }
-        if (offset + continuation_count > size) return false;
-        for (uint8_t index = 0; index < continuation_count; ++index) {
-            const uint8_t next = static_cast<uint8_t>(text[offset++]);
-            if ((next & 0xC0U) != 0x80U) return false;
-            code_point = (code_point << 6U) | (next & 0x3FU);
-        }
-        if (code_point < minimum || code_point > 0x10FFFFU ||
-            (code_point >= 0xD800U && code_point <= 0xDFFFU)) {
-            return false;
-        }
-    }
-    return true;
-}
 
 }  // namespace
 
@@ -1101,78 +1015,24 @@ bool Server::flush(Connection& connection, const uint64_t timestamp_ns) noexcept
 
 Server::FrameResult Server::consume_frame(Connection& connection,
                                           const uint64_t timestamp_ns) noexcept {
-    // RFC 6455 inbound layout:
-    //   byte 0: FIN | RSV1..3 | opcode
-    //   byte 1: MASK | payload length selector
-    //   optional 16/64-bit length, then mandatory client mask key, payload.
-    // Client payload bytes are unmasked in-place before control/data handling.
-    if (connection.read_size < 2) return FrameResult::kIncomplete;
-
-    const auto* input = reinterpret_cast<const uint8_t*>(
-        connection.read_buffer.data());
-    const uint8_t first = input[0];
-    const uint8_t second = input[1];
-    const bool final = (first & 0x80U) != 0;
-    const uint8_t opcode = first & 0x0FU;
-    const bool masked = (second & 0x80U) != 0;
-    const uint8_t length_marker = second & 0x7FU;
-    if ((first & 0x70U) != 0 || !masked) return FrameResult::kProtocolError;
-
-    size_t header_size = 2;
-    uint64_t payload_size_64 = 0;
-    if (length_marker <= 125) {
-        payload_size_64 = length_marker;
-    } else if (length_marker == 126) {
-        if (connection.read_size < 4) return FrameResult::kIncomplete;
-        payload_size_64 =
-            (static_cast<uint64_t>(input[2]) << 8U) | input[3];
-        if (payload_size_64 < 126) return FrameResult::kProtocolError;
-        header_size = 4;
-    } else {
-        if (connection.read_size < 10) return FrameResult::kIncomplete;
-        if ((input[2] & 0x80U) != 0) return FrameResult::kProtocolError;
-        for (size_t index = 0; index < 8; ++index) {
-            payload_size_64 = (payload_size_64 << 8U) | input[2U + index];
-        }
-        if (payload_size_64 <= 0xFFFFU) return FrameResult::kProtocolError;
-        header_size = 10;
+    wire::Frame parsed{};
+    const auto result = wire::frame(connection.read_buffer.data(), connection.read_size,
+                                    connection.fragmented_data, parsed);
+    switch (result) {
+    case wire::FrameResult::kIncomplete: return FrameResult::kIncomplete;
+    case wire::FrameResult::kProtocolError: return FrameResult::kProtocolError;
+    case wire::FrameResult::kMessageTooLarge: return FrameResult::kMessageTooLarge;
+    case wire::FrameResult::kInvalidUtf8: return FrameResult::kInvalidUtf8;
+    case wire::FrameResult::kConsumed: break;
     }
-
-    const bool control = (opcode & 0x08U) != 0;
-    if (control && (!final || payload_size_64 > 125)) {
-        return FrameResult::kProtocolError;
-    }
-    if (payload_size_64 >
-        static_cast<uint64_t>(kReadBufferBytes - kMaxClientFrameHeaderBytes)) {
-        return FrameResult::kMessageTooLarge;
-    }
-
-    const size_t payload_size = static_cast<size_t>(payload_size_64);
-    const size_t frame_size = header_size + 4U + payload_size;
-    if (connection.read_size < frame_size) return FrameResult::kIncomplete;
-
-    const uint8_t* mask = input + header_size;
-    char* payload = connection.read_buffer.data() + header_size + 4U;
-    for (size_t index = 0; index < payload_size; ++index) {
-        payload[index] = static_cast<char>(
-            static_cast<uint8_t>(payload[index]) ^ mask[index & 0x03U]);
-    }
-
+    const auto opcode = parsed.opcode;
+    const bool control = (opcode & 8U) != 0;
+    const size_t payload_size = parsed.payload_size;
+    const size_t frame_size = parsed.size;
+    char* payload = connection.read_buffer.data() + parsed.payload_offset;
     if (control) {
         switch (opcode) {
         case 0x08U: {
-            if (payload_size == 1) return FrameResult::kProtocolError;
-            if (payload_size >= 2) {
-                const uint16_t code = static_cast<uint16_t>(
-                    (static_cast<uint16_t>(
-                         static_cast<uint8_t>(payload[0])) << 8U) |
-                    static_cast<uint8_t>(payload[1]));
-                if (!valid_close_code(code)) return FrameResult::kProtocolError;
-            }
-            if (payload_size > 2 &&
-                !valid_utf8(payload + 2, payload_size - 2)) {
-                return FrameResult::kInvalidUtf8;
-            }
             // Echo a valid peer close payload, including normal-closure 1000.
             if (!queue_frame(connection, 0x08U, payload, payload_size)) {
                 slow_client_closes_.fetch_add(1U, std::memory_order_relaxed);
@@ -1199,24 +1059,7 @@ Server::FrameResult Server::consume_frame(Connection& connection,
             }
             break;
         default:
-            // A well-framed, unknown control opcode is discarded. This keeps
-            // extensions from crashing a client session while RSV bits remain
-            // strictly rejected above.
-            break;
-        }
-    } else {
-        // Data frames are fully unmasked before reaching this branch. The
-        // simulator currently has no client-to-server WS application command,
-        // but it still enforces RFC 6455's 0/1/2 fragmentation state machine
-        // before discarding application payloads.
-        if (opcode == 0x00U) {
-            if (!connection.fragmented_data) return FrameResult::kProtocolError;
-            if (final) connection.fragmented_data = false;
-        } else if (opcode == 0x01U || opcode == 0x02U) {
-            if (connection.fragmented_data) return FrameResult::kProtocolError;
-            connection.fragmented_data = !final;
-        } else {
-            return FrameResult::kProtocolError;
+            return FrameResult::kProtocolError; // Parser rejects reserved opcodes.
         }
     }
 

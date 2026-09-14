@@ -199,6 +199,25 @@ int main() {
         "{\"symbol_idx\":511,\"net_position\":512,\"gross_exposure\":512000}") !=
         std::string::npos);
 
+    // Framing failures must never enqueue a command, including a complete JSON
+    // object coalesced after a declared zero-length body.
+    for (const std::string& framing : {
+             std::string("Content-Length: 0\r\nContent-Length: 1\r\n"),
+             std::string("Transfer-Encoding: chunked\r\n"),
+             std::string("Content-Length: 0\r\n")}) {
+        const int fd = connect_loopback(server.port());
+        const std::string raw = "POST /api/v1/orders HTTP/1.1\r\n"
+            "Authorization: Bearer test-token\r\n" + framing + "\r\n" + body;
+        assert(::send(fd, raw.data(), raw.size(), 0) == static_cast<ssize_t>(raw.size()));
+        pollfd ready{.fd = fd, .events = POLLIN, .revents = 0};
+        assert(::poll(&ready, 1, 1000) > 0);
+        char reply[512]{};
+        const auto n = ::recv(fd, reply, sizeof(reply), 0);
+        assert(n > 0 && std::string_view(reply, static_cast<size_t>(n)).starts_with("HTTP/1.1 400"));
+        ::close(fd);
+        assert(!bridge.process_one(gateway));
+    }
+
     // Force one bounded nonblocking write per event-loop turn.  A raw client
     // first observes the /positions response but deliberately does not drain
     // it while another REST client submits an order.  The listener must keep

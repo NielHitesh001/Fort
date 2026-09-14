@@ -1,5 +1,6 @@
 #include "luv_http_server.hpp"
 #include "luv_websocket.hpp"
+#include "luv_websocket_parse.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -183,68 +184,10 @@ void reject_unowned_connection(const int fd, const int status,
 // HTTP field names and token values used by the WebSocket upgrade are ASCII
 // case-insensitive.  Keep parsing bounded by the received header block rather
 // than relying on an unbounded substring search.
-struct HeaderRange { const char* begin = nullptr; const char* end = nullptr; };
-char ascii_lower(char value) noexcept {
-    return value >= 'A' && value <= 'Z'
-        ? static_cast<char>(value - 'A' + 'a')
-        : value;
-}
-bool ascii_equal(const char* left, size_t left_size,
-                 const char* right) noexcept {
-    const size_t right_size = std::strlen(right);
-    if (left_size != right_size) return false;
-    for (size_t i = 0; i < left_size; ++i)
-        if (ascii_lower(left[i]) != ascii_lower(right[i])) return false;
-    return true;
-}
-HeaderRange header(const char* request, const char* block_end,
-                   const char* wanted_name) noexcept {
-    const char* line = std::strstr(request, "\r\n");
-    while (line && line < block_end) {
-        line += 2;
-        if (line >= block_end) break;
-        const char* line_end = std::strstr(line, "\r\n");
-        if (!line_end || line_end > block_end) break;
-        const char* colon = line;
-        while (colon < line_end && *colon != ':') ++colon;
-        if (colon < line_end && ascii_equal(line, size_t(colon - line), wanted_name)) {
-            const char* value_begin = colon + 1;
-            while (value_begin < line_end && (*value_begin == ' ' || *value_begin == '\t')) ++value_begin;
-            const char* value_end = line_end;
-            while (value_end > value_begin &&
-                   (value_end[-1] == ' ' || value_end[-1] == '\t')) --value_end;
-            return {value_begin, value_end};
-        }
-        line = line_end;
-    }
-    return {};
-}
-bool header_has_token(HeaderRange value, const char* token) noexcept {
-    while (value.begin && value.begin < value.end) {
-        while (value.begin < value.end &&
-               (*value.begin == ' ' || *value.begin == '\t' || *value.begin == ',')) ++value.begin;
-        const char* token_end = value.begin;
-        while (token_end < value.end && *token_end != ',') ++token_end;
-        const char* trimmed_end = token_end;
-        while (trimmed_end > value.begin &&
-               (trimmed_end[-1] == ' ' || trimmed_end[-1] == '\t')) --trimmed_end;
-        if (ascii_equal(value.begin, size_t(trimmed_end - value.begin), token)) return true;
-        value.begin = token_end < value.end ? token_end + 1 : value.end;
-    }
-    return false;
-}
-bool header_decimal_size(HeaderRange value, size_t& output) noexcept {
-    if (!value.begin || value.begin == value.end) return false;
-    size_t parsed = 0;
-    for (const char* current = value.begin; current < value.end; ++current) {
-        if (*current < '0' || *current > '9') return false;
-        const size_t digit = static_cast<size_t>(*current - '0');
-        if (parsed > (SIZE_MAX - digit) / 10U) return false;
-        parsed = parsed * 10U + digit;
-    }
-    output = parsed;
-    return true;
-}
+using wire::HeaderRange;
+using wire::ascii_equal;
+using wire::header;
+using wire::header_has_token;
 bool path_number(const char* path, const char* prefix, uint64_t& id) noexcept {
     const size_t prefix_size = std::strlen(prefix);
     if (std::strncmp(path, prefix, prefix_size) != 0) return false;
@@ -594,29 +537,18 @@ void HttpServer::read_client(ClientSlot& client) noexcept {
             client.incoming_size += static_cast<size_t>(received);
             client.incoming[client.incoming_size] = '\0';
             if (!client.header_complete) {
-                const char* const end = std::strstr(client.incoming.data(),
-                                                    "\r\n\r\n");
-                if (end) {
-                    client.header_size = static_cast<size_t>(
-                        (end + 4) - client.incoming.data());
-                    size_t body_size = 0;
-                    const HeaderRange content_length = header(
-                        client.incoming.data(), end, "Content-Length");
-                    if (content_length.begin &&
-                        !header_decimal_size(content_length, body_size)) {
-                        queue_inline_json(
-                            client, 400, "Bad Request",
-                            "{\"error\":\"invalid_content_length\"}");
-                        return;
-                    }
-                    if (client.header_size >= kMaxRequestBytes ||
-                        body_size > kMaxRequestBytes - 1U -
-                            client.header_size) {
-                        queue_inline_json(client, 413, "Payload Too Large",
-                                          "{\"error\":\"request_too_large\"}");
-                        return;
-                    }
-                    client.required_size = client.header_size + body_size;
+                const auto parsed = wire::request(
+                    {client.incoming.data(), client.incoming_size}, kMaxRequestBytes - 1);
+                if (parsed.status == wire::Status::invalid || parsed.status == wire::Status::too_large) {
+                    const bool large = parsed.status == wire::Status::too_large;
+                    queue_inline_json(client, large ? 413 : 400,
+                                      large ? "Payload Too Large" : "Bad Request",
+                                      "{\"error\":\"invalid_request_framing\"}");
+                    return;
+                }
+                if (parsed.required_size != 0) {
+                    client.header_size = parsed.header_size;
+                    client.required_size = parsed.required_size;
                     client.header_complete = true;
                 }
             }
@@ -688,7 +620,7 @@ void HttpServer::dispatch_client(ClientSlot& client) noexcept {
         char key[32]{};
         const size_t key_size = static_cast<size_t>(
             key_header.end - key_header.begin);
-        if (key_size >= sizeof(key)) {
+        if (key_size >= sizeof(key) || !wire::handshake({incoming, client.header_size})) {
             queue_inline_json(client, 400, "Bad Request",
                               "{\"error\":\"Invalid WebSocket key\"}");
             return;
@@ -728,6 +660,9 @@ void HttpServer::dispatch_client(ClientSlot& client) noexcept {
         return;
     }
 
+    // The connection closes after this request. Do not let coalesced bytes
+    // beyond Content-Length become part of the JSON command.
+    client.incoming[client.required_size] = '\0';
     Request command{};
     if (!std::strcmp(method, "POST") && !std::strcmp(path, "/api/v1/orders")) {
         command.command = Command::kSubmit;
