@@ -25,6 +25,8 @@ CPU contention, sample count, warmup and the precise measured boundaries. On mac
 use `sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize`; on Linux use `lscpu`
 and `/proc/meminfo`. Report unavailable details explicitly.
 
-The WebSocket suite currently has a failing burst-latency assertion. A command
-aborting before its final table is a failed run, not a complete benchmark report.
-See [known issues](KNOWN_ISSUES.md#websocket-burst-latency).
+The WebSocket burst-latency assertion passed locally after the macOS worker fix.
+See [measurements](PERFORMANCE_MEASUREMENTS.md) for source commit, hardware, results
+and limitations. A command aborting before its final table remains a failed run.
+See [known issues](KNOWN_ISSUES.md#websocket-burst-latency) for history and remaining
+platform/load validation.

@@ -2,7 +2,9 @@
 
 ## WebSocket burst latency
 
-Open as of 2026-09-14. `test_one_hundred_order_fill_burst` in
+Locally resolved on macOS in `9e5f353`; platform/load validation remains open.
+See [measurements and reproduction](PERFORMANCE_MEASUREMENTS.md).
+Historical context: `test_one_hundred_order_fill_burst` in
 `test_websocket.cpp` checks 100 disjoint fills with the configured 1,000-connection
 pool (900 unrelated subscribers). Prior local macOS runs aborted at the P99
 100 microsecond assertion, reporting approximately 300–365 microseconds. These

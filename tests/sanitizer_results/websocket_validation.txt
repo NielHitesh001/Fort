@@ -1,0 +1,50 @@
+Source: 9e5f353a9870cc96ff85aefa8cadf1772a592ce1
+Date: 2026-09-14
+Host: Apple M5, 10 logical CPUs, 16 GiB RAM, macOS 26.6.2 (Darwin 25.6.0).
+Release and TSan compiler: Apple Clang 21.0.0.
+ASan/UBSan compiler: Homebrew Clang 22.1.1.
+DPDK: OFF. OpenSSL: 3.6.4.
+
+Release: cmake --build build --parallel 4
+Build exited 0 with no warning/error lines.
+Regression: ctest --test-dir build --output-on-failure -j 4
+
+ASan/UBSan: cmake -S . -B build-remediation-asan -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ -DCMAKE_BUILD_TYPE=Debug -DLUV_ENABLE_ASAN_UBSAN=ON
+Build: cmake --build build-remediation-asan --target luv_websocket luv_http_server --parallel 4
+Test: ctest --test-dir build-remediation-asan -R '^(websocket|http_server)$' --output-on-failure
+
+TSan: cmake -S . -B build-tsan -DLUV_ENABLE_TSAN=ON
+Build: cmake --build build-tsan --target luv_websocket luv_http_server --parallel 4
+Test: ctest --test-dir build-tsan -R '^(websocket|http_server)$' --output-on-failure
+
+Captured test output (ASan/UBSan, TSan, then full release summary):
+Test project /Volumes/Niel/Fort-main/build-remediation-asan
+    Start  75: http_server
+1/2 Test  #75: http_server ......................   Passed    0.80 sec
+    Start 158: websocket
+2/2 Test #158: websocket ........................   Passed   31.65 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  32.45 sec
+Test project /Volumes/Niel/Fort-main/build-tsan
+    Start  75: http_server
+1/2 Test  #75: http_server ......................   Passed    1.07 sec
+    Start 158: websocket
+2/2 Test #158: websocket ........................   Passed   31.84 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  32.91 sec
+162/163 Test  #54: execution ..........................   Passed    0.66 sec
+163/163 Test  #75: http_server ........................   Passed    0.71 sec
+
+100% tests passed out of 162
+
+Total Test time (real) =  34.12 sec
+
+The following tests did not run:
+	148 - stress (Disabled)
+
+All three test commands exited 0. No sanitizer diagnostics were emitted.
+This is not a Linux runtime result, a LeakSanitizer claim, or a live-trading certification.

@@ -1,0 +1,46 @@
+Start testing: Sep 14 22:10 IST
+----------------------------------------------------------
+158/163 Testing: websocket
+158/163 Test: websocket
+Command: "/Volumes/Niel/Fort-main/build/test_websocket"
+Directory: /Volumes/Niel/Fort-main/build
+"websocket" start time: Sep 14 22:10 IST
+Output:
+----------------------------------------------------------
+      fill->JSON queued=9000 ns
+[OK] 1 REST order -> WebSocket fill delivery        11.858 ms
+      fill p50=3000 ns p99=5000 ns max=6000 ns
+[OK] fill callback -> JSON queue latency            11.316 ms
+      fanout=10 p50=4000 ns p99=6000 ns max=6000 ns
+      fanout=100 p50=7000 ns p99=11000 ns max=21000 ns
+[OK] 2 fanout to ten and one hundred subscribers   290.043 ms
+      100-order aggregate throughput=154798 fills/s
+      default-pool burst p50=45000 ns p99=75000 ns max=75000 ns
+[OK] 3 one hundred concurrent order fills           60.404 ms
+      backpressure detect->close=0 ns
+      kernel EAGAIN detect->close=5585000 ns
+[OK] 4 slow-client backpressure close               22.392 ms
+[OK] 5 disconnect cleanup                           11.256 ms
+[OK] 6 connection-pool exhaustion                   15.835 ms
+[OK] 7 RFC 6455 handshake and masking               37.274 ms
+      default ping arrived after 30.001 s
+[OK] 8 ping/pong keepalive and timeout            30164.035 ms
+[OK] 9 text JSON fill frame                         11.039 ms
+[OK] 10 normal close handshake                      10.839 ms
+      cleanup cycles=1000 connection storage=6216 bytes
+[OK] 11 one thousand connection churn cycles       141.672 ms
+[OK] Arena-compatible WebSocket storage validation    0.064 ms
+[OK] upgrade admission racing worker shutdown        0.183 ms
+[OK] fill publication racing worker shutdown         0.145 ms
+[OK] 12 cumulative partial fill notifications       10.916 ms
+[OK] 13 concurrent HTTP plus WebSocket fanout       65.019 ms
+All WebSocket scenarios passed
+<end of output>
+Test time =  31.40 sec
+----------------------------------------------------------
+Test Passed.
+"websocket" end time: Sep 14 22:10 IST
+"websocket" time elapsed: 00:00:31
+----------------------------------------------------------
+
+34/163 Testing: compliance_arithmetic_boundaries

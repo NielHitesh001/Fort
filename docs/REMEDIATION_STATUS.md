@@ -3,6 +3,12 @@
 Baseline: cdae713; work started 2026-09-14. This is an implementation/evidence
 tracker, not a readiness score or independent sign-off.
 
+Update: `9e5f353` completes macOS kqueue dispatch, bounds socket work between fill
+batches and adds a forced-kernel-backpressure test. The local full regression
+passed 162 tests (long stress disabled). Burst P99 was 75 us on the recorded host;
+see [measurements](PERFORMANCE_MEASUREMENTS.md). Linux/load validation and the
+broader production-readiness gates remain open.
+
 Validation: [local sanitizer/fuzz record](../tests/sanitizer_results/remediation.md).
 
 | Plan item | Status |

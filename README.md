@@ -78,8 +78,9 @@ timings do not establish feed-to-exchange latency or a service-level guarantee.
 
 Build `luv_latency_benchmark` and run `./build/luv_latency_benchmark` on your own
 test hardware. See [benchmark methodology](docs/BENCHMARKING.md), the
-[claim audit](docs/PERFORMANCE_AUDIT_FINDINGS.md), and the unresolved
-[WebSocket burst-latency issue](docs/KNOWN_ISSUES.md#websocket-burst-latency).
+[claim audit](docs/PERFORMANCE_AUDIT_FINDINGS.md), and the
+[local WebSocket measurements](docs/PERFORMANCE_MEASUREMENTS.md). Cross-platform
+and representative-load validation remain open.
 
 See [architecture and scope](docs/ARCHITECTURE_AND_SCOPE.md) for runtime integration
 boundaries and the [external review roadmap](docs/EXTERNAL_REVIEW_ROADMAP.md) for
