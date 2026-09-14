@@ -2,6 +2,8 @@
 
 This document details the functional capabilities included in Fort, as well as the out-of-scope production and regulatory components.
 
+Fort is a **research and simulation** framework. Meeting local measurements or green CI does not establish production readiness or suitability for live capital.
+
 ---
 
 ## 1. Included Capabilities
@@ -38,12 +40,13 @@ This document details the functional capabilities included in Fort, as well as t
 - **Multi-Region Raft Cluster Simulation**: Active-active cross-datacenter state machine replication (NY4, LD4, TY3) with Hybrid Logical Clock (HLC) causality.
 - **Hardware Watchdog & Circuit Breakers**: Multi-tier price collars, kill switches, and hardware heartbeat watchdogs.
 - **Optional DPDK Kernel Bypass Packet I/O**: High-throughput network backend for Linux environments (stubbed for macOS/POSIX).
+- **Local HTTP / WebSocket control plane**: Loopback HTTP server and WebSocket fill/fanout path for synthetic delayed fills, local tests, and latency measurement. Bound parsers are exercised under libFuzzer smoke. This is **not** a public API, venue gateway, or DMA session.
 
 ---
 
 ## 2. Excluded / Out-of-Scope Components
 
-The following components are **NOT** included in this educational framework and must be implemented before any live deployment:
+The following components are **NOT** included for production use and must not be treated as live-trading infrastructure:
 
 | Excluded Component | Status | Production Requirement |
 | :--- | :---: | :--- |
@@ -54,7 +57,7 @@ The following components are **NOT** included in this educational framework and 
 | **Statutory AML/KYC & FinCEN SAR Filing** | Excluded | Certified identity verification and SAR automated filing. |
 | **Third-Party Regulatory Audit Submissions** | Excluded | PCAOB independent auditor filings via SEC EDGAR. |
 | **Production Hardware HSM Key Management** | Excluded | FIPS 140-2 Level 3 hardware security modules. |
-| **REST / WebSocket Public Gateway** | Excluded | External HTTP/WebSocket API server endpoints. |
+| **Public / external REST & WebSocket gateway** | Excluded | Internet-facing authenticated API, venue connectivity, or third-party client access. Local loopback control plane (section 1.E) is present for simulation only. |
 
 ---
 
@@ -63,3 +66,5 @@ The following components are **NOT** included in this educational framework and 
 - **Academic & Research Exploration**: Studying market microstructure dynamics, Order Flow Imbalance, and stochastic volatility models.
 - **Quantitative Algorithm Testing**: Developing and backtesting algorithmic execution and market making strategies against realistic simulated order books.
 - **Systems & Performance Benchmarking**: Understanding low-latency C++ techniques (cache alignment, zero-allocation memory pools, branch prediction optimization).
+
+Latency numbers in `docs/PERFORMANCE_MEASUREMENTS.md` are host-specific local notes; CI macOS latency is report-only and is not a product SLA.
