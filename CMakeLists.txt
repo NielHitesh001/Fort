@@ -286,6 +286,9 @@ target_link_libraries(luv_websocket PRIVATE luv_http_server_impl luv_websocket_i
 # Keep the conventional CTest target name while exposing the standalone
 # `test_websocket` binary requested by the WebSocket microbenchmark workflow.
 set_target_properties(luv_websocket PROPERTIES OUTPUT_NAME test_websocket)
+# This suite enforces microsecond latency and a real 30-second keepalive.
+# Avoid contention from other CTest jobs and bound lifecycle regressions.
+set_tests_properties(websocket PROPERTIES RUN_SERIAL TRUE TIMEOUT 120)
 
 add_executable(luv_latency_benchmark test_latency.cpp)
 target_link_libraries(luv_latency_benchmark PRIVATE luv_core Threads::Threads)

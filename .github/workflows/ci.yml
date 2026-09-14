@@ -5,6 +5,21 @@ on:
   pull_request:
 
 jobs:
+  macos-websocket:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build socket tests
+        run: cmake --build build --target luv_websocket luv_http_server luv_prometheus_export --parallel 4
+      - name: Test socket lifecycle and latency
+        run: ctest --test-dir build -R '^(websocket|http_server|prometheus_export)$' --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-websocket-test-log
+          path: build/Testing/Temporary/LastTest.log
   parser-fuzz-smoke:
     runs-on: ubuntu-latest
     steps:

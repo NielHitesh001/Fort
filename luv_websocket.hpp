@@ -294,7 +294,7 @@ private:
     // and allocation-free.
     int event_queue_fd_ = -1;
     std::atomic<bool> worker_wakeup_pending_{false};
-    // Worker-owned persistent poll set. Fixed slot index `n + 1` belongs to
+    // Portable fallback poll set (macOS uses kqueue). Fixed slot `n + 1` belongs to
     // connection slot `n`; inactive entries use fd=-1. Therefore a fill wake
     // never rebuilds or zero-initializes a 1,000-entry set before it can
     // queue outbound JSON.

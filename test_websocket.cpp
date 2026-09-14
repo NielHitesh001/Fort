@@ -16,6 +16,7 @@
 #include <thread>
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -906,6 +907,42 @@ void test_slow_client_backpressure(ExecutionHarness& execution) {
     close_fd(sockets[1]);
 }
 
+void test_kernel_backpressure_deadline(ExecutionHarness& execution) {
+    NetworkFixture fixture(execution, 1);
+    int sockets[2]{-1, -1};
+    assert(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    const int flags = ::fcntl(sockets[0], F_GETFL, 0);
+    assert(flags >= 0 && ::fcntl(sockets[0], F_SETFL, flags | O_NONBLOCK) == 0);
+    int small_buffer = 512;
+    assert(::setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF,
+                       &small_buffer, sizeof(small_buffer)) == 0);
+    // Force actual kernel EAGAIN before handing ownership to the worker.
+    // No fills are published: application-buffer exhaustion cannot satisfy
+    // this test instead of the no-progress timer.
+    std::array<char, 256> padding{};
+    for (;;) {
+        const ssize_t sent = ::send(sockets[0], padding.data(), padding.size(),
+                                   MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (sent > 0) continue;
+        if (sent < 0 && errno == EINTR) continue;
+        assert(sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+        break;
+    }
+    assert(fixture.websocket->enqueue_upgrade(sockets[0], 8'002, kWebSocketKey) ==
+           luv::ws::UpgradeResult::kAccepted);
+    sockets[0] = -1;
+    assert(wait_until([&] {
+        return fixture.websocket->diagnostics().slow_client_closes == 1;
+    }, kLongTimeoutNs));
+    const auto diagnostics = fixture.websocket->diagnostics();
+    assert(diagnostics.last_backpressure_close_ns >= 5'000'000ULL);
+    assert(diagnostics.last_backpressure_close_ns < 10'000'000ULL);
+    assert(wait_until([&] { return fixture.websocket->active_connections() == 0; }));
+    std::printf("      kernel EAGAIN detect->close=%llu ns\n",
+                static_cast<unsigned long long>(diagnostics.last_backpressure_close_ns));
+    close_fd(sockets[1]);
+}
+
 void test_disconnect_cleanup(ExecutionHarness& execution) {
     NetworkFixture fixture(execution, 4);
     constexpr uint64_t order_id = 8'101;
@@ -1441,6 +1478,10 @@ int main(int argc, char** argv) {
         });
         run_case("slow-client backpressure microbenchmark", [&] {
             test_slow_client_backpressure(execution);
+            test_kernel_backpressure_deadline(execution);
+        });
+        run_case("default-pool 100-order burst microbenchmark", [&] {
+            test_one_hundred_order_fill_burst(execution);
         });
         std::puts("WebSocket microbenchmarks passed");
         return 0;
@@ -1465,6 +1506,7 @@ int main(int argc, char** argv) {
     });
     run_case("4 slow-client backpressure close", [&] {
         test_slow_client_backpressure(execution);
+        test_kernel_backpressure_deadline(execution);
     });
     run_case("5 disconnect cleanup", [&] {
         test_disconnect_cleanup(execution);

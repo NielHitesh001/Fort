@@ -603,6 +603,11 @@ void Server::drain_worker_signal() noexcept {
 }
 
 void Server::refresh_poll_interest(Connection& connection) noexcept {
+#if defined(__APPLE__)
+    // Queueing is syscall-free; write readiness is armed only after send
+    // cannot drain a buffer. The worker flushes fresh output in batches.
+    if (connection.write_offset != connection.write_size) schedule_flush(connection);
+#else
     if (!connections_ || &connection < connections_ ||
         &connection >= connections_ + max_connections_) {
         return;
@@ -616,6 +621,7 @@ void Server::refresh_poll_interest(Connection& connection) noexcept {
         descriptor.events = static_cast<short>(descriptor.events | POLLOUT);
     }
     descriptor.revents = 0;
+#endif
 }
 
 void Server::clear_poll_interest(Connection& connection) noexcept {
@@ -705,19 +711,21 @@ void Server::schedule_flush(Connection& connection) noexcept {
 
 void Server::flush_queued(const uint64_t timestamp_ns) noexcept {
 #if defined(__APPLE__)
-    int32_t index = flush_head_;
-    flush_head_ = -1;
-    flush_tail_ = -1;
-    while (index >= 0) {
+    // Bound socket work between fill batches. Preserve the remaining list
+    // across turns so a newly published burst waits behind at most one send
+    // once visible, rather than every subscriber in the previous batch.
+    for (uint32_t sent = 0; sent < 16 && flush_head_ >= 0; ++sent) {
+        if (sent != 0 && !events_.empty()) break;
+        const int32_t index = flush_head_;
         Connection& connection = connections_[static_cast<uint32_t>(index)];
-        const int32_t next = connection.flush_next;
+        flush_head_ = connection.flush_next;
+        if (flush_head_ < 0) flush_tail_ = -1;
         connection.flush_next = -1;
         connection.flush_queued = false;
         if (connection.fd >= 0 &&
             connection.write_offset != connection.write_size) {
             (void)flush(connection, timestamp_ns);
         }
-        index = next;
     }
 #else
     (void)timestamp_ns;
@@ -919,6 +927,22 @@ void Server::unsubscribe(Connection& connection) noexcept {
 
 void Server::close(Connection& connection) noexcept {
     if (connection.fd < 0) return;
+    // Unlink before resetting/reusing a slot: an intrusive next pointer must
+    // not be discarded while earlier queued slots still point at it.
+    if (connection.flush_queued) {
+        const int32_t target = static_cast<int32_t>(&connection - connections_);
+        int32_t previous = -1;
+        for (int32_t index = flush_head_; index >= 0;
+             index = connections_[static_cast<uint32_t>(index)].flush_next) {
+            if (index == target) {
+                if (previous < 0) flush_head_ = connection.flush_next;
+                else connections_[static_cast<uint32_t>(previous)].flush_next = connection.flush_next;
+                if (flush_tail_ == target) flush_tail_ = previous;
+                break;
+            }
+            previous = index;
+        }
+    }
     unsubscribe(connection);
     clear_poll_interest(connection);
     (void)::close(connection.fd);
@@ -1011,6 +1035,7 @@ bool Server::flush(Connection& connection, const uint64_t timestamp_ns) noexcept
             close(connection);
             return false;
         }
+        if (!set_write_interest(connection, false)) { close(connection); return false; }
         refresh_poll_interest(connection);
         return true;
     }
@@ -1038,11 +1063,20 @@ bool Server::flush(Connection& connection, const uint64_t timestamp_ns) noexcept
             // further progress rather than treating it as an immediate error.
             connection.write_blocked_since_ns = timestamp_ns;
         }
+        if (!set_write_interest(connection, connection.write_offset != connection.write_size)) {
+            close(connection);
+            return false;
+        }
+#if !defined(__APPLE__)
         refresh_poll_interest(connection);
+#endif
         return true;
     }
 
-    if (sent < 0 && errno == EINTR) return true;
+    if (sent < 0 && errno == EINTR) {
+        if (!set_write_interest(connection, true)) { close(connection); return false; }
+        return true;
+    }
     if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
         close(connection);
         return false;
@@ -1050,6 +1084,7 @@ bool Server::flush(Connection& connection, const uint64_t timestamp_ns) noexcept
 
     if (connection.write_blocked_since_ns == 0) {
         connection.write_blocked_since_ns = timestamp_ns;
+        if (!set_write_interest(connection, true)) { close(connection); return false; }
         return true;
     }
     if (timestamp_ns - connection.write_blocked_since_ns >=
@@ -1390,6 +1425,10 @@ void Server::accept_upgrade(const Upgrade& upgrade) noexcept {
         connection.read_size = upgrade.pre_read_size;
     }
     active_.fetch_add(1U, std::memory_order_release);
+    if (!register_connection_io(connection)) {
+        close(connection);
+        return;
+    }
     if (!subscribe(connection)) {
         // The fixed index is deliberately fail-closed. It should have room
         // for every active slot, but a corrupt/full index must never fall
@@ -1499,6 +1538,27 @@ void Server::run() noexcept {
             }
         }
 
+#if defined(__APPLE__)
+        flush_queued(monotonic_now_ns());
+        if (!events_.empty() || flush_head_ >= 0) timeout_ms = 0;
+        std::array<struct kevent, 128> ready_events{};
+        timespec timeout{timeout_ms / 1000, (timeout_ms % 1000) * 1'000'000L};
+        const int ready = ::kevent(event_queue_fd_, nullptr, 0, ready_events.data(),
+                                   static_cast<int>(ready_events.size()), &timeout);
+        const uint64_t io_now = monotonic_now_ns();
+        for (int index = 0; index < ready; ++index) {
+            // Filters are level-triggered; unread readiness remains in the
+            // kernel when fill work preempts this bounded I/O batch.
+            if (index != 0 && !events_.empty()) break;
+            const auto& event = ready_events[static_cast<size_t>(index)];
+            if (!event.udata) continue; // Wake pipe is drained at loop entry.
+            auto& connection = *static_cast<Connection*>(event.udata);
+            if (connection.fd < 0 || static_cast<uintptr_t>(connection.fd) != event.ident) continue;
+            if ((event.flags & EV_ERROR) != 0) { close(connection); continue; }
+            if (event.filter == EVFILT_READ) (void)receive(connection, io_now);
+            if (connection.fd >= 0 && event.filter == EVFILT_WRITE) (void)flush(connection, io_now);
+        }
+#else
         const int ready = ::poll(poll_fds_.data(), poll_fds_.size(), timeout_ms);
         if (ready > 0) {
             // A queued fill takes precedence over client I/O. Continue to
@@ -1539,6 +1599,7 @@ void Server::run() noexcept {
                 }
             }
         }
+#endif
     }
 }
 
