@@ -10,6 +10,7 @@
 
 #include "luv_consumer.hpp"
 #include "luv_execution.hpp"
+#include "luv_websocket_parse.hpp"
 
 namespace luv::ws {
 
@@ -179,7 +180,7 @@ private:
         int32_t flush_next = -1;
         bool awaiting_pong = false;
         bool close_after_flush = false;
-        bool fragmented_data = false;
+        wire::FragmentState fragmented_data{};
         bool flush_queued = false;
         bool write_waiting = false;
         std::array<char, kReadBufferBytes> read_buffer{};

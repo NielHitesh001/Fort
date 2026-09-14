@@ -8,7 +8,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   const std::string_view bytes(buffer.data(), count);
   (void)luv::wire::handshake(bytes);
   (void)luv::wire::handshake(bytes.substr(0, count / 2));
-  bool fragmented = false;
+  luv::wire::FragmentState fragmented{};
   size_t offset = 0;
   while (offset < count) {
     luv::wire::Frame frame{};

@@ -4,6 +4,11 @@
 #include <cstring>
 namespace luv::wire {
 constexpr size_t kDecodedKeyBytes = 16, kWebSocketKeyBytes = 24;
+// A client frame must fit in the fixed 2 KiB connection read buffer, including
+// its largest possible 14-byte header.  Apply the same bound to the complete
+// logical message so a continuation sequence cannot turn that fixed buffer
+// into unbounded aggregate state.
+constexpr size_t kMaxWebSocketMessageBytes = 2048 - 14;
 [[nodiscard]] inline int base64_value(const char value) noexcept {
   if (value >= 'A' && value <= 'Z')
     return value - 'A';
@@ -208,9 +213,17 @@ struct Frame {
   size_t size = 0, payload_offset = 0, payload_size = 0;
   uint8_t opcode = 0;
 };
+struct FragmentState {
+  bool fragmented = false;
+  uint8_t opcode = 0;
+  size_t message_size = 0;
+  // Text is retained only until its final continuation so UTF-8 is checked on
+  // the completed logical message. Binary messages need only their size.
+  std::array<char, kMaxWebSocketMessageBytes> text{};
+};
 // On success unmasks exactly one frame in place; incomplete input leaves state
 // unchanged.
-inline FrameResult frame(char *buffer, size_t size, bool &fragmented,
+inline FrameResult frame(char *buffer, size_t size, FragmentState &state,
                          Frame &output) noexcept {
   // RFC 6455 inbound layout:
   //   byte 0: FIN | RSV1..3 | opcode
@@ -261,7 +274,7 @@ inline FrameResult frame(char *buffer, size_t size, bool &fragmented,
   if (control && (!final || payload_size_64 > 125)) {
     return FrameResult::kProtocolError;
   }
-  if (payload_size_64 > static_cast<uint64_t>(2048 - 14)) {
+  if (payload_size_64 > kMaxWebSocketMessageBytes) {
     return FrameResult::kMessageTooLarge;
   }
 
@@ -293,14 +306,35 @@ inline FrameResult frame(char *buffer, size_t size, bool &fragmented,
   }
   if (!control) {
     if (opcode == 0x00U) {
-      if (!fragmented)
+      if (!state.fragmented)
         return FrameResult::kProtocolError;
-      if (final)
-        fragmented = false;
+      if (payload_size > kMaxWebSocketMessageBytes - state.message_size)
+        return FrameResult::kMessageTooLarge;
+      if (state.opcode == 0x01U) {
+        std::memcpy(state.text.data() + state.message_size, payload,
+                    payload_size);
+        if (final && !valid_utf8(state.text.data(),
+                                 state.message_size + payload_size)) {
+          return FrameResult::kInvalidUtf8;
+        }
+      }
+      if (final) {
+        state = FragmentState{};
+      } else {
+        state.message_size += payload_size;
+      }
     } else if (opcode == 0x01U || opcode == 0x02U) {
-      if (fragmented)
+      if (state.fragmented)
         return FrameResult::kProtocolError;
-      fragmented = !final;
+      if (opcode == 0x01U && final && !valid_utf8(payload, payload_size))
+        return FrameResult::kInvalidUtf8;
+      if (!final) {
+        state.fragmented = true;
+        state.opcode = opcode;
+        state.message_size = payload_size;
+        if (opcode == 0x01U)
+          std::memcpy(state.text.data(), payload, payload_size);
+      }
     } else {
       return FrameResult::kProtocolError;
     }

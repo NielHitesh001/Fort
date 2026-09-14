@@ -10,7 +10,7 @@ that a hosted run has passed. No comprehensive coverage claim is made.
 | OUCH, luv_ouch.hpp | test_ouch_parser: valid events plus random bytes | New fuzz_ouch target; add valid event corpus and sequence tests |
 | FIX, luv_fix.hpp | test_fix_protocol | New fuzz_fix and numeric boundary regression; full session/framing coverage remains open |
 | HTTP, luv_wire_parse.hpp | test_http_server and test_wire_parse | fuzz_http: production request line, header validation, Content-Length and body boundaries |
-| WebSocket, luv_websocket_parse.hpp | test_websocket and test_wire_parse | fuzz_websocket: production handshake, masking, lengths, opcodes, continuation state and close validation |
+| WebSocket, luv_websocket_parse.hpp | test_websocket and test_wire_parse | fuzz_websocket: production handshake, frames/lengths/masking/opcodes, bounded continuation state, completed-text UTF-8, and close validation |
 | MoldUDP64, luv_moldudp64.hpp | test_moldudp64_fixture | No libFuzzer target; header/message lengths and sequence edges |
 | Recovery, luv_recovery.hpp | corruption/replay tests | No libFuzzer target; malformed records and replay transitions |
 
@@ -37,13 +37,15 @@ These harnesses invoke no sockets, threads, network, or server instances.
 CI smoke is bounded to 10,000 runs per target on ubuntu-24.04, not continuous fuzzing.
 
 Remaining gaps: HTTP JSON command grammar, route/authentication semantics, Host
-requirements and broader HTTP conformance are not fuzzed. Transfer-Encoding is
-intentionally rejected; no chunked decoder is supplied. WebSocket text-message UTF-8
-(including fragmented text) is still not validated; close-reason UTF-8 is validated.
-Fragmentation state is exercised across concatenated frames, but message-wide size
-limits, transport scheduling/timeouts, extension/subprotocol negotiation and full
-session state are not covered by these pure parser harnesses. Partial input returns
-incomplete without dispatch; the listener handles EOF/deadlines and fixed-buffer limits.
+requirements and broader HTTP conformance are not fuzzed. These are semantic layers;
+add focused unit coverage only if a concrete crash path is found. Transfer-Encoding is
+intentionally rejected; no chunked decoder is supplied. WebSocket text is UTF-8
+validated only when its complete logical message arrives, allowing multibyte code
+points to cross fragments; close-reason UTF-8 is also validated. Fragmentation state
+and message-wide size limits are covered. Transport scheduling/timeouts,
+extension/subprotocol negotiation, and full-session lifecycle state remain outside
+these pure parser harnesses. Partial input returns incomplete without dispatch; the
+listener handles EOF/deadlines and fixed-buffer limits.
 
 Two synthetic FIX seeds are retained in `fuzz/corpus/fix`; pass a writable copy of
 that directory to fuzz_fix for a seeded campaign. CI uses these seeds. Neither
