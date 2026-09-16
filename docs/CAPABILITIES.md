@@ -2,6 +2,8 @@
 
 This document details the functional capabilities included in Fort, as well as out-of-scope production and regulatory components.
 
+Fort is a **research and simulation** framework. Meeting local measurements or green CI does not establish production readiness or suitability for live capital.
+
 ---
 
 ## 1. Included Capabilities
@@ -13,7 +15,7 @@ This document details the functional capabilities included in Fort, as well as o
 - **Multi-Level Order Flow Imbalance (OFI)**: Real-time calculation of Cont-Kukanov-Stoikov depth imbalance and Rama Cont multi-horizon order flow vectors.
 - **Micro-Price & Slippage Estimators**: Continuous computation of volume-weighted micro-price, bid-ask spreads in basis points, and book slippage models.
 - **Pre-Trade Risk & Execution Gateway**: Authoritative simulation risk checks (`PreTradeRisk` in `luv_execution.hpp`) with position caps, collar checks, circuit breakers, and rate limiters.
-- **Local Simulation Control Plane**: Local HTTP/WebSocket interface for injection and fill callbacks in simulation tests (defaults to loopback `127.0.0.1`; **simulation only**).
+- **Local Simulation Control Plane**: Local loopback HTTP server and WebSocket fill/fanout path (defaults to loopback `127.0.0.1`; **simulation only**). This is **not** a public API, venue gateway, or DMA session.
 
 ### B. Research Modules (Optional Libraries under `LUV_TESTS`, Not Wired into `luv_engine`)
 The following modules exist as standalone research models and test suites. They are **not** wired into the `luv_engine` matching loop:
@@ -26,13 +28,13 @@ The following modules exist as standalone research models and test suites. They 
 
 ## 2. Excluded / Out-of-Scope Components
 
-The following components are **NOT** included in this research simulator:
+The following components are **NOT** included in this research simulator and must not be treated as live-trading infrastructure:
 
 | Excluded Component | Status | Production Requirement |
 | :--- | :---: | :--- |
 | **Live Exchange Multicast Connectivity** | Excluded | Licensed market data feeds from Nasdaq/Cboe/CME. |
 | **Live Direct Market Access (DMA) Routing** | Excluded | Production OUCH / FIX binary order gateway sessions. |
-| **Public Venue Gateway** | Excluded | Public-facing exchange or broker gateway endpoints. |
+| **Public Venue Gateway** | Excluded | Public-facing exchange or broker gateway endpoints. Local loopback control plane is for simulation only. |
 | **Physical Clearing & Settlement (T+1 / T+2)** | Excluded | Integration with DTCC/NSCC/Euroclear clearinghouses. |
 | **Live Financial Custody & Banking Rails** | Excluded | Multi-currency custodial banking and fiat settlement rails. |
 | **Statutory AML/KYC & FinCEN SAR Filing** | Excluded | Certified identity verification and SAR automated filing. |
@@ -46,3 +48,5 @@ The following components are **NOT** included in this research simulator:
 - **Academic & Research Exploration**: Studying market microstructure dynamics, Order Flow Imbalance, and stochastic volatility models.
 - **Quantitative Algorithm Testing**: Developing and backtesting algorithmic execution and market making strategies against realistic simulated order books.
 - **Systems & Performance Benchmarking**: Understanding low-latency C++ techniques (cache alignment, zero-allocation memory pools, branch prediction optimization).
+
+Latency numbers in `docs/PERFORMANCE_MEASUREMENTS.md` are host-specific local notes; CI macOS latency is report-only and is not a product SLA.
