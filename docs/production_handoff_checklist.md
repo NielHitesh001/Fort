@@ -1,4 +1,7 @@
-# Production Handoff Checklist
+# Production Handoff Checklist (Parked Research State)
+
+> [!WARNING]
+> **Status: PARKED (Research Simulator).** Fort is frozen and does NOT trade live capital. This checklist documents prerequisite gating criteria that would be required if the owner ever un-parks the repository and prepares for external staging or capital deployment.
 
 ## Phase 1: Crash Recovery Validation
 
