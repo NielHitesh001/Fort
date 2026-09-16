@@ -21,5 +21,14 @@ int main() {
     assert(checked_add(10, 20, result) && result == 30);
     assert(!checked_add(std::numeric_limits<int64_t>::max(), 1, result));
     assert(!checked_add(std::numeric_limits<int64_t>::min(), -1, result));
+
+    assert(checked_sub(30, 20, result) && result == 10);
+    assert(!checked_sub(std::numeric_limits<int64_t>::min(), 1, result));
+    assert(!checked_sub(std::numeric_limits<int64_t>::max(), -1, result));
+
+    assert(checked_mul(10, 20, result) && result == 200);
+    assert(checked_mul(0, std::numeric_limits<int64_t>::max(), result) && result == 0);
+    assert(!checked_mul(std::numeric_limits<int64_t>::max(), 2, result));
+    assert(!checked_mul(std::numeric_limits<int64_t>::min(), 2, result));
     return 0;
 }

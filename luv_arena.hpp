@@ -61,8 +61,15 @@ struct Config {
     static constexpr uint32_t kTelemMask         = kTelemCapacity - 1;
 
     // AI model region (remainder after infrastructure)
-    // Measured at boot; this is the compile-time ceiling used for mmap sizing.
+    // Default is small/laptop-friendly (64 MB) for research builds.
+    // The large 13 GB reservation is enabled only via -DLUV_ENABLE_LARGE_AI_REGION=ON or custom LUV_AI_BUDGET_BYTES.
+#if defined(LUV_LARGE_AI_REGION)
     static constexpr size_t kAIBudgetBytes       = 13ULL * 1024 * 1024 * 1024;  // 13 GB
+#elif defined(LUV_AI_BUDGET_BYTES)
+    static constexpr size_t kAIBudgetBytes       = LUV_AI_BUDGET_BYTES;
+#else
+    static constexpr size_t kAIBudgetBytes       = 64ULL * 1024 * 1024;         // 64 MB
+#endif
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

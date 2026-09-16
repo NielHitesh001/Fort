@@ -189,6 +189,11 @@ inline uint64_t abs_i64(int64_t v) noexcept {
 
 using OutboundPacket = exec::OutboundPacket;
 
+// PreTradeRisk is the authoritative pre-trade risk check for the simulation
+// engine path (used directly by ExecutionGateway and main_engine).
+// Other risk, margin, and regulatory headers across the codebase (e.g. RTS 27/28,
+// ISDA SIMM, FINRA 4210, SEC 15c3-1) are exploratory research models tested
+// under LUV_TESTS and are not wired into ExecutionGateway.
 class PreTradeRisk {
 public:
     PreTradeRisk() = default;
@@ -705,9 +710,7 @@ public:
                 // still-open reservation while retaining filled_qty/qty in
                 // the terminal snapshot for audit/query visibility.
                 if (report.terminal && order.qty > 0) {
-                    state.risk.net_position -=
-                        exec::signed_qty_delta(order.side, order.qty);
-                    state.risk.gross_exposure -= order.price * order.qty;
+                    release_reservation(state.risk, order.side, order.qty, order.price);
                 }
                 order.state = 3;
                 if (state.risk.order_count > 0) --state.risk.order_count;
@@ -768,9 +771,7 @@ public:
             // remaining reservation; prior partial fills stay represented in
             // the settled position.  Clearing the slot without this reversal
             // would make each REST cancel permanently consume risk capacity.
-            state.risk.net_position -=
-                exec::signed_qty_delta(order.side, order.qty);
-            state.risk.gross_exposure -= order.price * order.qty;
+            release_reservation(state.risk, order.side, order.qty, order.price);
             order = ActiveOrder{};
             if (state.risk.order_count > 0) --state.risk.order_count;
             _rate_limiter.release();
@@ -944,6 +945,25 @@ private:
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
     }
+    static void release_reservation(RiskState& risk, uint8_t side,
+                                    int64_t qty, int64_t price) noexcept {
+        const int64_t delta = exec::signed_qty_delta(side, qty);
+        int64_t next_pos = 0;
+        if (numeric::checked_sub(risk.net_position, delta, next_pos)) {
+            risk.net_position = next_pos;
+        } else {
+            risk.net_position -= delta;
+        }
+        int64_t released_exposure = 0;
+        int64_t next_gross = 0;
+        if (numeric::checked_mul(price, qty, released_exposure) &&
+            numeric::checked_sub(risk.gross_exposure, released_exposure, next_gross)) {
+            risk.gross_exposure = next_gross;
+        } else {
+            risk.gross_exposure -= price * qty;
+        }
+    }
+
     [[nodiscard]] bool reserve_order_slot(
         const exec::OrderIntent& intent) noexcept {
         SymbolExecState& state = _arena->exec_states[intent.symbol_idx];
@@ -983,9 +1003,7 @@ private:
             if (state.orders[i].order_id != intent.client_order_id) continue;
             state.orders[i] = ActiveOrder{};
             if (state.risk.order_count > 0) --state.risk.order_count;
-            state.risk.net_position -=
-                exec::signed_qty_delta(intent.side, intent.qty);
-            state.risk.gross_exposure -= intent.price * intent.qty;
+            release_reservation(state.risk, intent.side, intent.qty, intent.price);
             return;
         }
     }

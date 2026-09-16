@@ -50,6 +50,7 @@ struct RunConfig {
     uint16_t udp_port = 0;  // 0 keeps egress disabled.
     uint16_t http_port = 0; // 0 keeps the control-plane API disabled.
     uint16_t prometheus_port = 0; // 0 keeps the metrics endpoint disabled.
+    const char* http_host = "127.0.0.1"; // Defaults to localhost to avoid accidental exposure.
     const char* model_path = nullptr;
     const char* api_token = nullptr;
     const char* api_token_file = nullptr;
@@ -67,6 +68,10 @@ struct RunConfig {
             cfg.model_path = argv[++i];
         } else if (std::strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) {
             cfg.http_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (std::strcmp(argv[i], "--http-host") == 0 && i + 1 < argc) {
+            cfg.http_host = argv[++i];
+        } else if (std::strcmp(argv[i], "--bind-all") == 0) {
+            cfg.http_host = "0.0.0.0";
         } else if (std::strcmp(argv[i], "--prometheus-port") == 0 && i + 1 < argc) {
             cfg.prometheus_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (std::strcmp(argv[i], "--api-token") == 0 && i + 1 < argc) {
@@ -300,7 +305,8 @@ int main(int argc, char** argv) {
     if (!parse_args(argc, argv, cfg)) {
         std::fprintf(stderr,
                      "Usage: %s [--messages N] [--model PATH] [--udp-port PORT] "
-                     "[--http-port PORT] [--prometheus-port PORT "
+                     "[--http-port PORT] [--http-host ADDR] [--bind-all] "
+                     "[--prometheus-port PORT "
                      "[--api-token TOKEN | --api-token-file PATH] "
                      "[--metrics-token TOKEN | --metrics-token-file PATH]\n",
                      argv[0]);
@@ -389,7 +395,7 @@ int main(int argc, char** argv) {
                                           &websocket);
     }
     luv::http::HttpServer http_server(http_bridge, api_keys,
-                                      {.bind_address = "0.0.0.0", .port = cfg.http_port}, &websocket);
+                                      {.bind_address = cfg.http_host, .port = cfg.http_port}, &websocket);
     if (cfg.http_port != 0 && !http_server.start()) {
         std::fprintf(stderr, "Unable to start HTTP API server.\n");
         execution.set_fill_event_callback(nullptr, nullptr);
