@@ -41,4 +41,4 @@ ctest --test-dir build-asan --output-on-failure
 
 ## Reporting vulnerabilities
 
-If you discover a security vulnerability or bug within this educational framework, please open an issue on GitHub or submit a pull request with regression tests.
+Fort is a **parked research project**. If you discover a security vulnerability or bug within this educational framework, you may open an issue on GitHub or submit a pull request with regression tests. Please note that the project is not actively maintained and there is no SLA or commitment for responses or patches.

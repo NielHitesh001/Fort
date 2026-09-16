@@ -1,107 +1,93 @@
-# Fort: Low-Latency Market Microstructure & Order Book Simulation Framework
+# Fort: In-Process Limit Order Book Research Simulator
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![CMake](https://img.shields.io/badge/CMake-3.20+-green.svg)](https://cmake.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/NielHitesh001/Fort/actions/workflows/ci.yml/badge.svg)](https://github.com/NielHitesh001/Fort/actions/workflows/ci.yml)
+[![Status: Parked](https://img.shields.io/badge/Status-PARKED-lightgrey.svg)](#)
 
 ---
-
-## ⚠️ Disclaimer: Educational & Research Software
 
 > [!IMPORTANT]
-> **This software is designed exclusively for educational, research, and algorithmic simulation purposes.**
->
-> - ✗ **NOT PRODUCTION-READY FOR LIVE CAPITAL**: It does not connect to live exchange execution gateways (OUCH/FIX) or manage real financial capital.
-> - ✗ **NOT A REGULATED BROKER-DEALER OR TRADING VENUE**: It does not perform live customer KYC/AML identification, FinCEN SAR filing, physical clearinghouse settlement (T+1/T+2), or custodial banking.
-> - ✗ **SIMULATION ONLY**: Mathematical regulatory capital models (e.g. SEC Rule 15c3-1, 15c3-3, 17a-4/5) and quantitative pricing models are implementations for research, simulation, and academic study.
-> - ✗ **AUDIT LOG IS NOT REGULATORY RECORDKEEPING**: `luv_safety.hpp` provides local hash-chain integrity checks only. It is not WORM storage and does not satisfy SEC Rule 17a-4, FINRA, or CAT retention/custody requirements.
->
-> Deploying software with live financial capital requires licensed market data infrastructure, clearing memberships, certified legal/regulatory compliance programs, and independent external auditing.
->
-> For full details of included vs. out-of-scope capabilities, see [**docs/CAPABILITIES.md**](docs/CAPABILITIES.md).
+> **Status: PARKED (research simulator).**  
+> **What Fort is:** Fort is a high-performance **in-process** limit-order-book **simulator** designed for market microstructure research, algorithmic execution study, and low-latency C++ systems benchmarking.  
+> **What Fort is NOT:** Fort is **not** a live trading venue, broker-dealer, exchange gateway, Bloomberg terminal, managed money platform, or certified regulatory compliance system. It does not trade live capital or connect to live exchange sessions.  
+> **Maintenance Notice:** **No active feature development.** This project is frozen in a stable research state. Issues and pull requests may go unanswered unless the owner un-parks the repository for a specific written project goal. See [**docs/PARKED.md**](docs/PARKED.md).  
+> **Key References:** [**docs/CAPABILITIES.md**](docs/CAPABILITIES.md) · [**docs/KNOWN_ISSUES.md**](docs/KNOWN_ISSUES.md) · [**docs/ARCHITECTURE_AND_SCOPE.md**](docs/ARCHITECTURE_AND_SCOPE.md) · [**docs/RESEARCH_MODULES.md**](docs/RESEARCH_MODULES.md).
 
 ---
 
-## Overview
+## Engine Path Quick Start
 
-**Fort** is a high-performance C++20 simulation framework designed for studying **market microstructure**, **order matching algorithms**, **stochastic volatility pricing**, and **low-latency systems programming techniques** (cache alignment, zero-allocation memory pools, and lock-free concurrency).
+The authoritative, supported build artifact is the core simulation engine (`luv_engine`) and its supporting tests.
 
----
-
-## Core Capabilities
-
-- **Protocol Decoders**: Nasdaq ITCH 5.0 binary protocol parser with strict input length and bounds validation.
-- **In-Memory Limit Order Book (LOB)**: Cache-aligned price-time FIFO matching engine supporting limit, market, pegged, and iceberg orders.
-- **Zero-Allocation Memory Arenas**: Pre-allocated contiguous memory pools (`luv_arena.hpp`) eliminating dynamic runtime allocations on critical paths.
-- **Market Microstructure Feature Extraction**: Real-time Order Flow Imbalance (OFI), micro-price estimators, and live decision tree ML inference.
-- **Quantitative Derivatives Pricing**: Black-Scholes Greeks, Heston (1993) stochastic volatility, Bates (1996) jump-diffusion, and Rough Bergomi (rBergomi) fractional volatility models.
-- **Multi-Region Cross-DC Consensus Simulation**: Active-active cross-datacenter state machine replication (NY4, LD4, TY3) with Hybrid Logical Clocks.
-- **High-Resolution Telemetry**: Lock-free SPSC ring buffer for sub-microsecond latency measurement and percentile tracking.
-
----
-
-## Quick Start
+- **Primary host:** macOS (Clang / AppleClang)
+- **Secondary host:** Linux / Ubuntu 24.04 (Clang / GCC)
 
 ### 1. Prerequisites
 - Modern C++20 compiler (Clang 13+, GCC 11+, or AppleClang)
 - CMake 3.20+
-- OpenSSL (Crypto library)
+- OpenSSL (crypto library for hash chaining and auth)
 
-### 2. Build & Test
+### 2. Configure, Build & Run (Engine Path Only)
 
 ```bash
 # Clone the repository
 git clone https://github.com/NielHitesh001/Fort.git
 cd Fort
 
-# Configure & build release binary
+# Configure release build (defaults to laptop-friendly 64MB AI arena and 127.0.0.1 HTTP bind)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
 
-# Run the configured test suites
-ctest --test-dir build --output-on-failure
+# Build core simulation engine and control-plane modules
+cmake --build build --target luv_engine luv_websocket luv_http_server luv_prometheus_export --parallel
 
-# Run the in-memory latency benchmark
-./build/luv_latency_benchmark
+# Run core engine tests
+ctest --test-dir build -R '^(feed|lob|execution|sequence_tracker|crash_recovery|numeric_limits|arena|websocket|http_server|prometheus_export)$' --output-on-failure
+
+# Run the simulation engine with synthetic feed
+./build/luv_engine --messages 100000
 ```
 
-For detailed build instructions, sanitizers (ASan/UBSan), and platform-specific options, see [**BUILDING.md**](BUILDING.md).
+For sanitizer configurations (ASan/UBSan) and optional build definitions, see [**BUILDING.md**](BUILDING.md).
 
 ---
 
-## Performance Notes
+## Core Capabilities (Simulation Scope)
 
-Fort includes local simulation benchmarks, but the previously advertised latency
-figures lack retained host-specific evidence and are withdrawn. Local computation
-timings do not establish feed-to-exchange latency or a service-level guarantee.
+- **Binary Feed Decoder**: Nasdaq ITCH 5.0 binary protocol parser with strict input length and bounds validation.
+- **In-Memory Limit Order Book (LOB)**: Cache-aligned price-time FIFO matching engine supporting limit, market, pegged, and iceberg orders.
+- **Zero-Allocation Memory Arena**: Pre-allocated contiguous memory pools (`luv_arena.hpp`) eliminating heap fragmentation and dynamic runtime allocation on critical paths.
+- **Microstructure Analytics**: Real-time Order Flow Imbalance (OFI), micro-price estimators, and live decision tree inference.
+- **Pre-Trade Risk Gateway**: Authoritative simulation risk check (`PreTradeRisk` in `luv_execution.hpp`) enforcing symbol position limits, fat-finger collars, and circuit breakers.
+- **Local Control Plane**: Loopback HTTP (`127.0.0.1`) and WebSocket interface for local simulation control, injection, and fill observation.
+- **Research Library**: Standalone quantitative derivatives pricing models and regulatory capital formulas retained under `LUV_TESTS` for academic study (see [**docs/RESEARCH_MODULES.md**](docs/RESEARCH_MODULES.md)).
 
-Build `luv_latency_benchmark` and run `./build/luv_latency_benchmark` on your own
-test hardware. See [benchmark methodology](docs/BENCHMARKING.md), the
-[claim audit](docs/PERFORMANCE_AUDIT_FINDINGS.md), and the
-[local WebSocket measurements](docs/PERFORMANCE_MEASUREMENTS.md). Cross-platform
-and representative-load validation remain open.
+---
 
-See [architecture and scope](docs/ARCHITECTURE_AND_SCOPE.md) for runtime integration
-boundaries and the [external review roadmap](docs/EXTERNAL_REVIEW_ROADMAP.md) for
-proposed evidence gates. Review dates and budgets require owner approval and quotes;
-they are not commitments or certifications.
+## Performance & Benchmark Disclaimers
+
+Fort includes local microbenchmarks for studying systems programming techniques. Local computation timings do not establish feed-to-exchange latency or any service-level guarantee.
+
+- Benchmarks run on local test hardware and measure in-memory compute steps only.
+- WebSocket latency figures in CI macOS runs are **report-only diagnostics**, not production SLAs.
+- See [**docs/BENCHMARKING.md**](docs/BENCHMARKING.md), [**docs/PERFORMANCE_AUDIT_FINDINGS.md**](docs/PERFORMANCE_AUDIT_FINDINGS.md), and [**docs/KNOWN_ISSUES.md**](docs/KNOWN_ISSUES.md).
 
 ---
 
 ## Documentation Index
 
-- [**docs/CAPABILITIES.md**](docs/CAPABILITIES.md) - Full specification of included vs. excluded features.
+- [**docs/PARKED.md**](docs/PARKED.md) - Project freeze rationale, supported paths, and un-parking conditions.
+- [**docs/KNOWN_ISSUES.md**](docs/KNOWN_ISSUES.md) - Current limitations, book capacity limits, and parked status.
+- [**docs/CAPABILITIES.md**](docs/CAPABILITIES.md) - Full specification of included vs. excluded capabilities.
+- [**docs/RESEARCH_MODULES.md**](docs/RESEARCH_MODULES.md) - Index of standalone research and academic test targets.
+- [**docs/ARCHITECTURE_AND_SCOPE.md**](docs/ARCHITECTURE_AND_SCOPE.md) - Runtime boundaries and architectural layers.
+- [**docs/COMPLIANCE_STATUS.md**](docs/COMPLIANCE_STATUS.md) - Regulatory simulation status matrix.
 - [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) - System architecture, memory layout, and threading model.
-- [**docs/API.md**](docs/API.md) - Core API reference, class hierarchy, and complexity guarantees.
-- [**docs/EXAMPLES.md**](docs/EXAMPLES.md) - Compilable code examples and tutorial walkthroughs.
-- [**docs/BENCHMARKING.md**](docs/BENCHMARKING.md) - Microbenchmark methodology and latency analysis.
-- [**docs/AUDIT_LOGGING.md**](docs/AUDIT_LOGGING.md) - Audit trail architecture and compliance standards.
-- [**docs/COMPLIANCE_STATUS.md**](docs/COMPLIANCE_STATUS.md) - Simulation scope and regulatory-status matrix.
-- [**docs/TROUBLESHOOTING.md**](docs/TROUBLESHOOTING.md) - Structured failure events and operator responses.
+- [**docs/API.md**](docs/API.md) - Core API reference and complexity guarantees.
+- [**docs/BENCHMARKING.md**](docs/BENCHMARKING.md) - Microbenchmark methodology.
+- [**docs/AUDIT_LOGGING.md**](docs/AUDIT_LOGGING.md) - Audit trail architecture and limitations.
 - [**BUILDING.md**](BUILDING.md) - Compilation instructions and sanitizer testing.
-- [**SECURITY.md**](SECURITY.md) - Security policy, threat model, and memory safety guarantees.
-- [**ROADMAP.md**](ROADMAP.md) - Future research and architectural roadmap.
+- [**SECURITY.md**](SECURITY.md) - Security policy, threat model, and vulnerability reporting.
 
 ---
 
