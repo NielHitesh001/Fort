@@ -19,6 +19,8 @@ option(LUV_ENABLE_DYNAMIC_MODEL_LOADING
     "Allow loading trusted Treelite/TL2cgen shared-object predictors" OFF)
 option(LUV_REQUIRE_MLOCK
     "Fail Arena initialisation when infrastructure memory cannot be locked" OFF)
+option(LUV_ENABLE_LARGE_AI_REGION
+    "Enable full 13GB AI model allocation in Arena (default is laptop-friendly 64MB)" OFF)
 option(LUV_ENABLE_DPDK
     "Build the Linux DPDK packet I/O backend" OFF)
 
@@ -50,6 +52,9 @@ target_compile_options(luv_core INTERFACE
 if(LUV_ENABLE_SIGN_CONVERSION_WARNINGS)
     target_compile_options(luv_core INTERFACE
         $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wsign-conversion>)
+endif()
+if(LUV_ENABLE_LARGE_AI_REGION)
+    target_compile_definitions(luv_core INTERFACE LUV_LARGE_AI_REGION=1)
 endif()
 if(LUV_ENABLE_FUZZING)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR LUV_ENABLE_TSAN)
