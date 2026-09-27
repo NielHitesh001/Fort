@@ -1,0 +1,9 @@
+{
+  "data": {
+    "source": "csv", "path": "quotes.csv", "label": "SYNTHETIC QUOTES — not actual exchange ticks",
+    "symbols": ["DEMO.NS"], "start": "2025-02-03", "end": "2025-02-04", "mode": "quotes", "interval": "1m"
+  },
+  "strategy": {"name": "momentum", "lookback": 5, "threshold": 0.002, "quantity": 20},
+  "execution": {"initial_cash": 100000, "commission_bps": 3, "slippage_bps": 2, "max_position": 1000},
+  "seed": 42, "output": "../runs"
+}

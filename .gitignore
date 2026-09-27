@@ -29,3 +29,9 @@
 /attorney_pipeline_template.csv
 /warm_intro_targets_template.csv
 /INVESTOR_READINESS_BRIEF.md
+
+# Historical backtesting caches and per-run output.
+/backtesting/.venv/
+/backtesting/cache/
+/backtesting/runs/
+__pycache__/

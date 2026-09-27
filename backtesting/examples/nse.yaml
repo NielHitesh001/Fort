@@ -1,0 +1,30 @@
+data:
+  source: yfinance
+  symbols: [RELIANCE.NS, TCS.NS]
+  start: '2025-02-03'
+  end: '2025-04-01'
+  mode: bars
+  interval: 1d
+  participation: 0.01
+  spread_bps: 2
+strategy:
+  name: mean_reversion
+  lookback: 10
+  threshold: 0.015
+  quantity: 20
+execution:
+  initial_cash: 1000000
+  commission_bps: 3
+  slippage_bps: 2
+  max_position: 1000
+  latency_ns: 0
+  fill_capacity: 100000
+analytics:
+  risk_free_rate: 0
+  periods_per_year: 252
+seed: 42
+workers: 2
+runs:
+  - {lookback: 10, threshold: 0.015}
+  - {lookback: 20, threshold: 0.025}
+output: ../runs

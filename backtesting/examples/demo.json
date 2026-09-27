@@ -1,0 +1,11 @@
+{
+  "data": {
+    "source": "csv", "path": "synthetic.csv",
+    "label": "SYNTHETIC FIXTURE — not actual NSE prices",
+    "symbols": ["DEMO.NS", "SAMPLE.BO"], "start": "2025-01-01", "end": "2025-07-01",
+    "mode": "bars", "interval": "1d", "participation": 0.01, "spread_bps": 2
+  },
+  "strategy": {"name": "mean_reversion", "lookback": 10, "threshold": 0.015, "quantity": 20},
+  "execution": {"initial_cash": 100000, "commission_bps": 3, "slippage_bps": 2, "max_position": 1000},
+  "seed": 42, "output": "../runs"
+}

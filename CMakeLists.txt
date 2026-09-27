@@ -323,3 +323,8 @@ endif()
 add_executable(luv_perf_stress test_stress.cpp)
 target_link_libraries(luv_perf_stress PRIVATE luv_core Threads::Threads)
 target_compile_options(luv_perf_stress PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+
+# Historical Indian cash-equity research backtester (no live gateway required).
+add_executable(fort_replay backtesting/replay.cpp)
+target_link_libraries(fort_replay PRIVATE luv_core)
+luv_add_test(historical_backtest)
