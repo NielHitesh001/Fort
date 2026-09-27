@@ -35,3 +35,11 @@
 /backtesting/cache/
 /backtesting/runs/
 __pycache__/
+
+# Corridor UI build, dependencies, secrets, and local validation artifacts.
+/frontend/node_modules/
+/frontend/.next/
+/frontend/.env*
+!/frontend/.env.example
+/frontend/tsconfig.tsbuildinfo
+/frontend/artifacts/
