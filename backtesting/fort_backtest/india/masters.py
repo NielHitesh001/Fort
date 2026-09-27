@@ -32,7 +32,7 @@ def master_csv(body, exchange):
     f = read_csv(body)
     if set(MASTER_FIELDS).issubset(set(c.lower() for c in f.columns)):
         f.columns = f.columns.str.lower()
-        out = f.copy()
+        out = f[f.exchange.eq(exchange)].copy()
     elif exchange == "NSE":
         require(
             f, ["SYMBOL", "NAME_OF_COMPANY", "SERIES", "DATE_OF_LISTING", "ISIN_NUMBER"]
@@ -101,7 +101,10 @@ def master_csv(body, exchange):
 
 def bse_master_json(body):
     try:
-        f = pd.DataFrame(json.loads(body))
+        payload = json.loads(body)
+        f = pd.DataFrame(
+            payload.get("Table", payload) if isinstance(payload, dict) else payload
+        )
         f = f.rename(
             columns={
                 "SCRIP_CD": "symbol",

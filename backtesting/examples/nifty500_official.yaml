@@ -1,0 +1,24 @@
+data:
+  source: nse_bhavcopy
+  universe: NIFTY500
+  history_start: '2023-01-01'
+  start: '2025-03-03'
+  end: '2025-04-01'
+  cache_dir: ../cache/india
+  min_history_sessions: 504
+  min_coverage: 0.98
+  min_avg_volume: 10000
+  min_avg_turnover: 10000000
+  quality_policy: error
+strategy:
+  name: momentum
+  lookback: 10
+  threshold: 0.02
+  quantity: 5
+execution:
+  initial_cash: 10000000
+  max_position: 1000
+analytics:
+  max_trade_charts: 6
+seed: 42
+output: ../runs

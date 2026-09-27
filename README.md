@@ -19,7 +19,7 @@
 ## Indian-market historical backtesting
 
 A historical research extension now provides NSE/BSE OHLCV downloads, validated
-bar/quote CSV replay, pluggable C++ strategies, bounded allocation-free execution,
+official NSE/BSE bhavcopy archives and index universes, bar/quote CSV replay, pluggable C++ strategies, bounded allocation-free execution,
 concurrent parameter runs, and HTML/PDF performance reports. Start with the
 [backtesting guide](backtesting/README.md) and its offline or NSE examples.
 This extension retains the simulator scope and documents its data and execution

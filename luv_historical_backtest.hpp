@@ -10,7 +10,8 @@
 #include <vector>
 
 namespace luv::historical {
-constexpr size_t kSymbols = 64, kOrders = 256, kDepth = 5;
+constexpr size_t kSymbols = 512, kOrders = 2048, kDepth = 5;
+constexpr int64_t kMaxVolume = 1'000'000'000'000;
 constexpr int64_t kMaxPrice = 1'000'000'000, kMaxQty = 1'000'000'000;
 enum class Side : uint8_t { Buy, Sell };
 enum class Kind : uint8_t { Open, Bar, Quote };
@@ -104,7 +105,7 @@ public:
         if (e.kind == Kind::Bar)
             return price(e.open) && price(e.close) && price(e.low) && price(e.high) &&
                 e.low <= std::min(e.open, e.close) && e.high >= std::max(e.open, e.close) &&
-                e.volume >= 0 && e.volume <= kMaxQty;
+                e.volume >= 0 && e.volume <= kMaxVolume;
         for (size_t i = 0; i < kDepth; ++i) {
             const auto b = e.book.bids[i], a = e.book.asks[i];
             if (b.qty < 0 || a.qty < 0 || b.qty > kMaxQty || a.qty > kMaxQty ||

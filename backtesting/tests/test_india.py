@@ -88,6 +88,12 @@ class ParserTests(unittest.TestCase):
         f = parse_bhavcopy(UDIFF.replace(b",1000,", b",0,"), "NSE", "2025-03-28")
         self.assertEqual(f.volume.iloc[0], 0)
 
+    def test_large_daily_volume(self):
+        f = parse_bhavcopy(
+            UDIFF.replace(b",1000,", b",5000000000,"), "NSE", "2025-03-28"
+        )
+        self.assertEqual(f.volume.iloc[0], 5_000_000_000)
+
     def test_nse_indices_turnover_units(self):
         b = b"Index Name,Index Date,Open Index Value,High Index Value,Low Index Value,Closing Index Value,Volume,Turnover (Rs. Cr.)\nNifty 50,28-03-2025,100,110,90,105,1000,2\n"
         f = parse_indices(b, "2025-03-28")

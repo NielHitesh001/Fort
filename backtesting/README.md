@@ -5,6 +5,10 @@ normalized event file → allocation-free C++ replay → Python analytics and re
 The legacy `luv_backtest.hpp` stub remains available for compatibility; this
 pipeline uses `luv_historical_backtest.hpp` and does not use its cash-flow metrics.
 
+## Official NSE/BSE coverage
+
+See [India data guide](INDIA_DATA.md) for official bhavcopy downloads, Nifty/Sensex/BSE universes, pre-period history/liquidity filters, offline replay, and master/calendar refresh. Official archives are the primary path; Yahoo remains a secondary convenience source.
+
 ## Run
 
 From the repository root (Python 3.11+ and a C++20 compiler):
@@ -43,7 +47,7 @@ and gives every parameter run the same events.
 
 ## Execution and accounting contract
 
-- **Scope:** long-only, fully funded cash equities, at most 64 symbols per run.
+- **Scope:** long-only, fully funded cash equities, at most 512 symbols per run.
   Market orders are IOC on the next eligible executable event; limit orders
   persist until filled or cancelled. There is no forced final liquidation.
   Outstanding orders and positions are exported at the end.
@@ -108,8 +112,9 @@ outside 09:15–15:30, duplicate symbol timestamps, overlapping bars, missing
 requested symbols, crossed quotes, nonfinite/nonpositive prices, fractional or
 negative volume, and invalid OHLC envelopes are rejected. Weekend records fail
 unless listed in `extra_sessions`; `holidays` explicitly excludes dates. Both
-lists use quoted `YYYY-MM-DD` strings. The calendar is **not** a maintained NSE/BSE
+lists use quoted `YYYY-MM-DD` strings. These CSV/Yahoo calendar settings do not constitute a maintained NSE/BSE
 holiday database; missing sessions are neither filled nor assumed to be holidays.
+The official-data path uses cached annual NSE calendars and an explicit BSE calendar or proxy.
 
 Yahoo is called with `auto_adjust=False`. Any fetched dividend/split/capital-gain
 action causes the run to fail because the engine has no corporate-action ledger.
@@ -164,7 +169,7 @@ feed decoder and historical order-queue simulation are outside this adapter.
 
 The engine allocates fill and sample buffers once at construction. Orders,
 positions, depth, and rolling windows use fixed arrays; replay does not resize,
-allocate, perform I/O, or read a wall clock. Defaults: 256 simultaneous active
+allocate, perform I/O, or read a wall clock. Defaults: 2,048 simultaneous active
 orders, five levels, 100,000 fills; equity capacity equals the loaded event count.
 Inactive order slots are reused. Sample/fill exhaustion stops the run explicitly.
 This preserves Fort's preallocation pattern without allocating its large global
@@ -213,8 +218,8 @@ not the result of a separate zero-cost counterfactual simulation.
 ## Readiness
 
 This delivers a runnable, tested research backtester, not a certification of
-production readiness. Before institutional deployment it still needs a maintained
-exchange calendar/security master, corporate-action and delisting handling,
+production readiness. Before institutional deployment it still needs point-in-time
+security masters and exchange-calendar exception verification, corporate-action and delisting handling,
 point-in-time universe data, realistic impact/queue models where required,
 market-specific tax schedules, and workload-specific performance/operational
 validation. These limitations are surfaced in the reports rather than hidden

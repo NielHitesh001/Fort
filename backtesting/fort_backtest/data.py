@@ -16,15 +16,21 @@ def digest(path: Path) -> str:
 
 def load(config: dict, base: Path) -> tuple[pd.DataFrame, dict]:
     source = config["source"]
+    official = source in {"nse_bhavcopy", "bse_bhavcopy", "india_bhavcopy"}
+    if official:
+        from .india.loader import load as load_india
+        frame, metadata = load_india(config, base)
     symbols = config["symbols"]
-    if not isinstance(symbols, list) or not 1 <= len(symbols) <= 64 or len(set(symbols)) != len(symbols) or not all(isinstance(s, str) and s for s in symbols):
-        raise ValueError("symbols must be 1..64 unique strings")
+    if not isinstance(symbols, list) or not 1 <= len(symbols) <= 512 or len(set(symbols)) != len(symbols) or not all(isinstance(s, str) and s for s in symbols):
+        raise ValueError("symbols must be 1..512 unique strings")
     start, end = pd.Timestamp(config["start"]), pd.Timestamp(config["end"])
     if start.tz is not None or end.tz is not None or start >= end:
         raise ValueError("start/end must be unzoned dates with start < end (end exclusive)")
     if config.get("interval", "1d") not in INTERVALS:
         raise ValueError("unsupported interval")
-    if source == "csv":
+    if official:
+        pass
+    elif source == "csv":
         path = (base / config["path"]).resolve()
         frame = pd.read_csv(path)
         metadata = {"source": "csv", "path": str(path), "sha256": digest(path), "label": config.get("label", "User-supplied historical data")}
@@ -49,7 +55,7 @@ def load(config: dict, base: Path) -> tuple[pd.DataFrame, dict]:
         frame = pd.concat(frames, ignore_index=True)
         metadata = {"source": "Yahoo Finance via yfinance", "version": yf.__version__, "adjustment": "raw; corporate-action periods rejected", "label": "Historical Indian cash equities"}
     else:
-        raise ValueError("source must be csv or yfinance")
+        raise ValueError("source must be csv, yfinance, nse_bhavcopy, bse_bhavcopy or india_bhavcopy")
     if not {"timestamp", "symbol"}.issubset(frame.columns) or frame.empty:
         raise ValueError("data needs timestamp and symbol columns and nonempty rows")
     if frame[["timestamp", "symbol"]].isna().any().any():
@@ -95,7 +101,7 @@ def numeric(frame: pd.DataFrame, columns: list[str], prices: bool) -> None:
             raise ValueError(f"missing column {col}")
         frame[col] = pd.to_numeric(frame[col], errors="raise")
         values = frame[col].to_numpy(dtype=float)
-        if not np.isfinite(values).all() or (values < (0.01 if prices else 0)).any() or (values > (10_000_000 if prices else 1_000_000_000)).any():
+        if not np.isfinite(values).all() or (values < (0.01 if prices else 0)).any() or (values > (10_000_000 if prices else (1_000_000_000_000 if col == "volume" else 1_000_000_000))).any():
             raise ValueError(f"invalid {col}: finite positive prices / nonnegative bounded sizes required")
         if not prices and not np.equal(values, np.floor(values)).all():
             raise ValueError(f"{col} must contain integer shares")
@@ -134,7 +140,7 @@ def normalize(frame: pd.DataFrame, config: dict, path: Path) -> pd.DataFrame:
             if px - half <= 0:
                 raise ValueError("spread leaves nonpositive bid")
             # Capacity is known before this bar: never use its future volume.
-            size = int(previous_volume.get(r.symbol, 0) * participation)
+            size = min(1_000_000_000, int(previous_volume.get(r.symbol, 0) * participation))
             levels = [px-half, size, px+half, size] + [0]*16
             add(begin, r.symbol, 0, levels=levels)
             # A bar becomes available immediately before the next boundary.

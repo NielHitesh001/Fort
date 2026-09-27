@@ -1,0 +1,22 @@
+data:
+  source: bse_bhavcopy
+  universe: SENSEX
+  start: '2025-03-03'
+  end: '2025-04-01'
+  # Explicit proxy. Use calendar_file for an independently verified BSE calendar.
+  calendar_exchange: NSE
+  cache_dir: ../cache/india
+  min_history_sessions: 0
+  min_avg_volume: 0
+  quality_policy: warn
+strategy:
+  name: momentum
+  lookback: 5
+  threshold: 0.01
+  quantity: 10
+execution:
+  initial_cash: 10000000
+  max_position: 1000
+analytics:
+  max_trade_charts: 4
+output: ../runs

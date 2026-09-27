@@ -48,7 +48,7 @@ void timing_and_limits() {
 void risk_priority_and_depth() {
     Engine e({500,0,0,100,0},20,20); Idle s;
     assert(e.step(quote(1),s));
-    assert(!e.submit(64,Side::Buy,1)); assert(!e.submit(0,Side::Buy,-1));
+    assert(!e.submit(kSymbols,Side::Buy,1)); assert(!e.submit(0,Side::Buy,-1));
     e.submit(0,Side::Sell,2); e.submit(0,Side::Buy,5,10000);
     const auto market=e.submit(0,Side::Buy,5);
     assert(e.step(quote(2),s));
@@ -89,7 +89,8 @@ void bars_and_callback_orders() {
     } strategy;
     Engine e({10000,0,0,100,0},10,10);
     Event bar{}; bar.timestamp=1; bar.kind=Kind::Bar;
-    bar.open=bar.high=bar.low=bar.close=10000; bar.volume=100;
+    bar.open=bar.high=bar.low=bar.close=10000; bar.volume=5'000'000'000;
+    assert(Engine::valid(bar));
     assert(e.step(bar,strategy)); assert(e.fill_count()==0 && e.pending(0));
     auto q=quote(2); q.kind=Kind::Open;
     assert(e.step(q,strategy)); assert(e.fill_count()==1 && e.position(0).qty==1);
@@ -105,4 +106,14 @@ void bars_and_callback_orders() {
     for (uint64_t i=2;i<550;++i) { assert(reuse.submit(0, i%2 ? Side::Sell : Side::Buy,1)); assert(reuse.step(quote(i),idle)); }
     assert(reuse.fill_count()==548);
 }
-int main(){bars_and_callback_orders();liquidity_and_accounting();timing_and_limits();risk_priority_and_depth();failure_and_no_allocations();determinism(); std::puts("Historical replay tests passed; zero replay allocations.");}
+void broad_universe() {
+    Engine engine({1'000'000,0,0,100,0},1000,1000); Idle strategy;
+    for (uint16_t symbol=0;symbol<500;++symbol) assert(engine.step(quote(1,symbol),strategy));
+    for (uint16_t symbol=0;symbol<500;++symbol) assert(engine.submit(symbol,Side::Buy,1));
+    watch=true;
+    for (uint16_t symbol=0;symbol<500;++symbol) assert(engine.step(quote(2,symbol),strategy));
+    watch=false;
+    assert(allocations==0 && engine.fill_count()==500 && engine.rejections()==0);
+    assert(engine.position(499).qty==1 && engine.equity()==1'000'000);
+}
+int main(){broad_universe();bars_and_callback_orders();liquidity_and_accounting();timing_and_limits();risk_priority_and_depth();failure_and_no_allocations();determinism(); std::puts("Historical replay tests passed; zero replay allocations.");}

@@ -21,7 +21,7 @@ def validate_parameters(cfg):
     st, ex, an = cfg["strategy"], cfg["execution"], cfg["analytics"]
     integers = [(st["lookback"], 2, 256), (st["quantity"], 1, 1_000_000_000),
         (ex["max_position"], 1, 1_000_000_000), (ex["latency_ns"], 0, 2**63-1),
-        (ex["fill_capacity"], 1, 10_000_000), (an["periods_per_year"], 2, 366)]
+        (ex["fill_capacity"], 1, 10_000_000), (an["periods_per_year"], 2, 366), (an.get("max_trade_charts",12), 0, 512)]
     if any(type(v) is not int or not lo <= v <= hi for v,lo,hi in integers):
         raise ValueError("integer strategy, capacity, latency or annualization parameter out of range")
     for value, low, high in [(ex["initial_cash"], 0, 1e15), (st["threshold"], 0, 1),
@@ -44,22 +44,24 @@ def configuration(path: Path):
     unknown = set(cfg) - {"data", "strategy", "execution", "analytics", "seed", "output", "runs", "workers"}
     if unknown:
         raise ValueError(f"unknown config keys: {unknown}")
-    required = {"data": {"source", "symbols", "start", "end"}, "strategy": {"name"}}
+    required = {"data": {"source", "start", "end"}, "strategy": {"name"}}
     allowed = {
-        "data": {"source", "symbols", "start", "end", "path", "label", "mode", "interval", "participation", "spread_bps", "holidays", "extra_sessions"},
+        "data": {"source", "symbols", "start", "end", "path", "label", "mode", "interval", "participation", "spread_bps", "holidays", "extra_sessions", "universe", "exchange", "cache_dir", "offline", "refresh", "adjusted", "calendar_file", "calendar_exchange", "master_file", "universe_file", "include_sme", "series", "exchange_preference", "history_start", "min_history_sessions", "min_coverage", "min_avg_volume", "min_avg_turnover", "min_market_cap", "top_n", "quality_policy", "price_jump_threshold", "master_max_age_days"},
         "strategy": {"name", "lookback", "threshold", "quantity"},
         "execution": {"initial_cash", "commission_bps", "slippage_bps", "max_position", "latency_ns", "fill_capacity"},
-        "analytics": {"risk_free_rate", "periods_per_year"},
+        "analytics": {"risk_free_rate", "periods_per_year", "max_trade_charts"},
     }
     for section, keys in allowed.items():
         value = cfg.setdefault(section, {})
         if not isinstance(value, dict) or set(value) - keys or required.get(section, set()) - set(value):
             raise ValueError(f"missing or unknown keys in {section}")
+    if not cfg["data"].get("symbols") and not cfg["data"].get("universe"):
+        raise ValueError("data requires symbols or universe")
     if cfg["strategy"]["name"] not in {"mean_reversion", "momentum"}:
         raise ValueError("unknown strategy")
     defaults = {"strategy": {"lookback": 20, "threshold": .02, "quantity": 10},
         "execution": {"initial_cash": 1_000_000, "commission_bps": 3, "slippage_bps": 2, "max_position": 100_000, "latency_ns": 0, "fill_capacity": 100_000},
-        "analytics": {"risk_free_rate": 0., "periods_per_year": 252}}
+        "analytics": {"risk_free_rate": 0., "periods_per_year": 252, "max_trade_charts": 12}}
     for section, values in defaults.items():
         cfg[section] = {**values, **cfg[section]}
     validate_parameters(cfg)
@@ -81,7 +83,7 @@ def run_one(job):
     command = [str(binary), str(events), str(output), *map(str, [ex["initial_cash"], ex["commission_bps"], ex["slippage_bps"], ex["max_position"], ex["latency_ns"], st["lookback"], st["threshold"], st["quantity"], st["name"], ex["fill_capacity"]])]
     try:
         completed = subprocess.run(command, text=True, capture_output=True, check=True)
-        versions = {p: importlib.metadata.version(p) for p in ["numpy", "pandas", "matplotlib", "PyYAML", "yfinance"]}
+        versions = {p: importlib.metadata.version(p) for p in ["numpy", "pandas", "matplotlib", "PyYAML", "yfinance", "requests"]}
         manifest = {"schema_version": 1, "config": cfg, "data": metadata, "events_sha256": data.digest(Path(events)),
             "executable_sha256": data.digest(Path(binary)), "python": platform.python_version(), "dependencies": versions,
             "execution_model": "later-open bars / independent quote snapshots; price-time priority; long-only",
@@ -103,9 +105,17 @@ def main():
     parser.add_argument("config", type=Path)
     parser.add_argument("--binary", type=Path, default=ROOT / "build" / "fort_replay")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--universe", help="NIFTY50, NIFTY500, SENSEX, BSE100, BSE500, or ALL")
+    parser.add_argument("--source", choices=["csv", "yfinance", "nse_bhavcopy", "bse_bhavcopy", "india_bhavcopy"])
+    parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     path = args.config.resolve()
     cfg = configuration(path)
+    if args.source: cfg["data"]["source"] = args.source
+    if args.universe:
+        cfg["data"].pop("symbols", None)
+        cfg["data"]["universe"] = args.universe
+    if args.offline: cfg["data"]["offline"] = True
     binary = args.binary.resolve()
     if not binary.is_file():
         raise ValueError("build fort_replay first: cmake --build build --target fort_replay")

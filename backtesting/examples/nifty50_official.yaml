@@ -1,0 +1,26 @@
+# Short smoke run; the liquid-index screen is explicitly relaxed here.
+# For a research history screen, see nifty500_official.yaml.
+data:
+  source: nse_bhavcopy
+  universe: NIFTY50
+  start: '2026-08-03'
+  end: '2026-09-01'
+  cache_dir: ../cache/india
+  interval: 1d
+  min_history_sessions: 0
+  min_avg_volume: 0
+  quality_policy: warn
+strategy:
+  name: mean_reversion
+  lookback: 5
+  threshold: 0.015
+  quantity: 5
+execution:
+  initial_cash: 10000000
+  max_position: 1000
+  commission_bps: 3
+  slippage_bps: 2
+analytics:
+  max_trade_charts: 6
+seed: 42
+output: ../runs

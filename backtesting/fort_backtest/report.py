@@ -47,13 +47,14 @@ def generate(directory: Path, source: pd.DataFrame, config: dict, manifest: dict
         fig.text(.09, .94, "FORT / BACKTEST REPORT", fontsize=20, weight="bold")
         fig.text(.09, .905, subtitle, fontsize=9, wrap=True)
         fig.text(.09, .88, "Strategy: " + config["strategy"]["name"], fontsize=12)
-        y = .84
+        fig.text(.09, .856, f"Universe: {len(config["data"]["symbols"])} symbols | Excluded: {len(manifest["data"].get("excluded", []))} | Quality issue records: {len(manifest["data"].get("quality_issues", []))}", fontsize=9)
+        y = .82
         for k, value in metrics.items():
             fig.text(.09, y, k.replace("_", " ").capitalize(), fontsize=10)
             fig.text(.88, y, format_metric(k, value), fontsize=10, ha="right")
             y -= .026
         import textwrap
-        fig.text(.09, y-.02, textwrap.fill(NOTES, 100), fontsize=8, va="top", linespacing=1.5)
+        fig.text(.09, y-.02, textwrap.fill(NOTES + (" Official bhavcopy is unadjusted. Current-universe survivorship bias and raw-price jump warnings apply; see the HTML provenance section." if "bhavcopy" in manifest["data"]["source"] else ""), 100), fontsize=8, va="top", linespacing=1.5)
         pdf.savefig(fig); plt.close(fig)
         def save(fig, name, title):
             fig.suptitle(title, x=.08, ha="left", weight="bold", fontsize=16)
@@ -101,7 +102,8 @@ def generate(directory: Path, source: pd.DataFrame, config: dict, manifest: dict
         ax.xaxis.set_major_formatter(PercentFormatter(1))
         save(fig, "return_distribution", "Distribution of observed daily returns")
         fills = pd.read_csv(directory / "trades.csv")
-        for index, symbol in enumerate(config["data"]["symbols"]):
+        chart_limit = config.get("analytics", {}).get("max_trade_charts", 12)
+        for index, symbol in list(enumerate(config["data"]["symbols"]))[:chart_limit]:
             frame = source[source.symbol == symbol]
             fig, ax = plt.subplots()
             price = frame.close if "close" in frame else (frame.bid + frame.ask)/2
@@ -118,5 +120,5 @@ def generate(directory: Path, source: pd.DataFrame, config: dict, manifest: dict
     page = f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fort backtest report</title>
 <style>body{{font:16px/1.6 system-ui,sans-serif;color:#172b3e;max-width:1100px;margin:40px auto;padding:0 24px}}h1{{font-size:38px}}table{{border-collapse:collapse;width:100%}}th,td{{padding:7px;border-bottom:1px solid #ddd;text-align:left}}td{{text-align:right}}img{{width:100%}}figure{{margin:35px 0}}figcaption{{color:#526273}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f5f8;padding:20px}}.note{{padding:20px;background:#f2f5f8}}@media print{{figure{{break-inside:avoid}}}}</style>
 <h1>Fort · Historical backtest</h1><p>{html.escape(subtitle)}</p><p>Strategy: {html.escape(config['strategy']['name'])}</p><table>{rows}</table>
-<p class="note">{html.escape(NOTES)}</p>{figures}<h2>Daily portfolio data</h2>{daily.to_html(float_format=lambda x: f'{x:.6f}')}<h2>Reproducibility manifest</h2><pre>{html.escape(json.dumps(manifest, indent=2))}</pre></html>'''
+<p class="note">{html.escape(NOTES)} Per-symbol charts show the first {chart_limit} symbols at most; CSV exports include the full universe.</p><h2>Data quality and provenance</h2><pre>{html.escape(json.dumps({k: manifest["data"][k] for k in ["source", "adjustment", "membership", "quality_issues", "excluded", "calendar_proxy"] if k in manifest["data"]}, indent=2))}</pre>{figures}<h2>Daily portfolio data</h2>{daily.to_html(float_format=lambda x: f'{x:.6f}')}<h2>Reproducibility manifest</h2><pre>{html.escape(json.dumps(manifest, indent=2))}</pre></html>'''
     (directory / "report.html").write_text(page)
