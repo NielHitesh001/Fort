@@ -12,7 +12,7 @@ This document records the exact findings from the codebase audit (`luv_*.hpp`, `
   - Maximum 16 orders per price level (`Config::kMaxOrdersPerLevel`).
   - Maximum 64 active orders per symbol (`Config::kMaxActiveOrders`).
   - Price levels use fixed-point arithmetic ($\text{price} \times 10^4$).
-- **UI Implementation**: Order Book ladder displays Bids descending on the left and Asks ascending on the right, with depth percentage bars computed against the visible maximum volume. If WebSocket depth deltas are unavailable, an explicit empty state is rendered noting that in-process LOB state is not yet wired to a public depth broadcast.
+- **UI Implementation**: Order Book ladder displays Bids descending on the left and Asks ascending on the right, with depth percentage bars computed against the visible maximum volume. When the feed is offline or unverified, an explicit `<EmptyState>` is rendered to prevent showing fabricated depth.
 
 ---
 
@@ -84,3 +84,17 @@ This document records the exact findings from the codebase audit (`luv_*.hpp`, `
   - Durable audit log uses local SHA-256 hash chaining for accidental corruption detection.
   - It does **not** provide SEC Rule 17a-4, FINRA, or CAT compliance.
 - **UI Implementation**: The Audit screen provides a paginated viewer with CSV export and an uncompromised disclaimer regarding research boundaries.
+
+---
+
+### 7. Hardening & Bugfix Pass: Independent Signals vs. Bugs
+
+| Item | Status | Root Cause & Resolution |
+| :--- | :--- | :--- |
+| **Bug 1: Order Book & Audit Trail showing fake live data while offline** | **Fixed (Bug)** | Hardcoded mock state arrays in `useState` and fallback rows (`query.data?.rows || [...]`) bypassed connection-state gates. **Fixed**: Replaced with strict connection-state checks (`useConnectionState`), rendering `<EmptyState>` when offline or unverified. |
+| **Bug 2: System Health disagreeing connectivity indicators** | **Clarified & Harmonized (Real Signals + UI Fix)** | The 4 signals (`/healthz` HTTP probe, RFC 6455 WebSocket stream, ITCH 5.0 Feed ingestion state, and Global status) are genuinely independent subsystems: (1) HTTP health probe tests port 9090; (2) WebSocket transport tests port 8080 stream; (3) Feed state tests tick rate arrival. **Fixed**: Fixed hardcoded `wsConnected=true` and `feedFresh=true` assumptions, wired them to real scrape/transport states, and added an explicit *Subsystem Signal Notice* callout explaining divergence when transport is connected while HTTP/Feed stalls. |
+| **Bug 3: Tick Rate vs Last Tick Update contradiction** | **Fixed (Bug)** | `lastUpdate` was set to current clock time on component mount rather than being bound to actual tick ingestion events. **Fixed**: Bound `lastTickTime` directly to Prometheus scrapes where `luv_execution_tick_rate_hz > 0`; displays `"No ticks observed"` when rate is 0 or offline. |
+| **Bug 4: Ambiguous client-side breaker toggle** | **Fixed (Improvement)** | Breaker toggle button lacked visual differentiation from real engine action controls. **Fixed**: Created shared `<DemoOnlyControl>` with dashed border, amber badge (`DEMO / UI-ONLY`), and tooltip explaining it operates exclusively in local browser state. |
+| **Bug 5: Static "NO TELEMETRY SCRAPE YET" header note** | **Fixed (Improvement)** | Static text was displayed regardless of active route or connection state. **Fixed**: Header note is now screen-aware, rendering `"ENGINE OFFLINE · NO ACTIVE SCRAPE"`, `"LAST SCRAPE: Xs AGO"`, or `"DIRECT API PROBE MODE"`. |
+| **Part 2: Sandbox / API Console (`/sandbox`)** | **Implemented (Feature)** | Added 7th screen featuring raw REST test client, verbatim Prometheus `:9090/metrics` fetcher, live RFC 6455 WebSocket inspector, connection store debug panel, and environment readout. Marked with persistent `INTERNAL TOOL` banner. |
+| **Part 3: Unified Connection State & Regression Test** | **Implemented (Hardening)** | Extracted `useConnectionState()` in `lib/connection.ts` as the single source of truth across all 7 screens. Added automated Playwright test verifying that when offline, no screen displays fabricated numbers. |

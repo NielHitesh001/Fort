@@ -27,7 +27,7 @@ import {
 import { NumericValue } from '@/components/primitives/NumericValue';
 import { StatusChip } from '@/components/primitives/StatusChip';
 import { EmptyState } from '@/components/primitives/EmptyState';
-import { Sample } from '@/components/telemetry';
+import { Sample } from '@/lib/connection';
 
 interface TelemetryScreenProps {
   metrics: Record<string, number>;
@@ -37,14 +37,14 @@ interface TelemetryScreenProps {
 }
 
 export function TelemetryScreen({ metrics, history, fresh, age }: TelemetryScreenProps) {
-  const tickRate = metrics.luv_execution_tick_rate_hz;
-  const riskNs = metrics.luv_execution_risk_check_latency_nanoseconds;
-  const inferenceUs = metrics.luv_execution_inference_latency_microseconds;
-  const fillsTotal = metrics.luv_execution_fills_total;
-  const rejectionsTotal = metrics.luv_execution_rejections_total;
-  const wsDrops = metrics.luv_websocket_fill_notification_drops_total;
-  const queueDepth = metrics.luv_telemetry_queue_depth;
-  const droppedSnapshots = metrics.luv_telemetry_dropped_snapshots_total;
+  const tickRate = fresh ? metrics.luv_execution_tick_rate_hz : undefined;
+  const riskNs = fresh ? metrics.luv_execution_risk_check_latency_nanoseconds : undefined;
+  const inferenceUs = fresh ? metrics.luv_execution_inference_latency_microseconds : undefined;
+  const fillsTotal = fresh ? metrics.luv_execution_fills_total : undefined;
+  const rejectionsTotal = fresh ? metrics.luv_execution_rejections_total : undefined;
+  const wsDrops = fresh ? metrics.luv_websocket_fill_notification_drops_total : undefined;
+  const queueDepth = fresh ? metrics.luv_telemetry_queue_depth : undefined;
+  const droppedSnapshots = fresh ? metrics.luv_telemetry_dropped_snapshots_total : undefined;
 
   return (
     <div className="space-y-4">
@@ -120,10 +120,10 @@ export function TelemetryScreen({ metrics, history, fresh, age }: TelemetryScree
               <Activity className="w-4 h-4 text-[var(--status-ok)]" />
               <h2>Throughput Time Series (Events / Sec)</h2>
             </div>
-            <StatusChip status={fresh ? 'live' : 'stale'} label={fresh ? 'Real-Time Scrape' : 'Telemetry Stale'} />
+            <StatusChip status={fresh ? 'live' : 'stale'} label={fresh ? 'Real-Time Scrape' : 'Telemetry Offline'} />
           </div>
           <div className="p-4 h-[250px] font-mono">
-            {history.length > 0 ? (
+            {fresh && history.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={history} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
                   <defs>
@@ -174,7 +174,7 @@ export function TelemetryScreen({ metrics, history, fresh, age }: TelemetryScree
             <span className="text-[11px] font-mono text-[var(--text-secondary)]">Single-pass hot path</span>
           </div>
           <div className="p-4 h-[250px] font-mono">
-            {history.length > 0 ? (
+            {fresh && history.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={history} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
                   <CartesianGrid stroke="#263140" strokeDasharray="3 3" vertical={false} />

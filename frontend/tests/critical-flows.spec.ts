@@ -1,3 +1,5 @@
+'use client';
+
 import { test, expect } from '@playwright/test';
 
 test.describe('Corridor Frontend Critical Flows & Specifications', () => {
@@ -65,6 +67,21 @@ test.describe('Corridor Frontend Critical Flows & Specifications', () => {
         }),
       });
     });
+
+    await page.route('**/api/corridor/ledger', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total: 2,
+          validation: 'valid',
+          rows: [
+            { sequence: '0', type: 'kAdd', order_id: '1001', quantity: '100', price: '1502500', side: 0, timestamp_ns: '1726000000000001000' },
+            { sequence: '1', type: 'kFill', order_id: '1001', quantity: '100', price: '1502500', side: 0, timestamp_ns: '1726000000000002500' },
+          ],
+        }),
+      });
+    });
   });
 
   test('Persistent Sandbox Watermark is visible across screens', async ({ page }) => {
@@ -75,7 +92,6 @@ test.describe('Corridor Frontend Critical Flows & Specifications', () => {
   });
 
   test('Flow 1: Submit limit order with optimistic pending -> backend confirmed live state', async ({ page }) => {
-    // Intercept POST /api/corridor/orders to return 202 Accepted
     await page.route('**/api/corridor/orders', async (route) => {
       if (route.request().method() === 'POST') {
         await route.fulfill({
@@ -90,16 +106,13 @@ test.describe('Corridor Frontend Critical Flows & Specifications', () => {
 
     await page.goto('/execution');
 
-    // Fill order ticket
     await page.fill('input[aria-label="Quantity"]', '50');
     await page.fill('input[aria-label="Limit Price"]', '150.25');
 
-    // Submit order
     const submitBtn = page.getByRole('button', { name: /Submit Order/i });
     await expect(submitBtn).toBeEnabled();
     await submitBtn.click();
 
-    // Verify order appears in table with live status
     const orderRow = page.locator('table[aria-label="Orders Table"] tbody tr').first();
     await expect(orderRow).toBeVisible();
     await expect(orderRow).toContainText('#101');
@@ -107,7 +120,6 @@ test.describe('Corridor Frontend Critical Flows & Specifications', () => {
   });
 
   test('Flow 2: Cancel order flow with confirmation modal', async ({ page }) => {
-    // Seed an order
     await page.route('**/api/corridor/orders', async (route) => {
       if (route.request().method() === 'POST') {
         await route.fulfill({
@@ -138,17 +150,14 @@ test.describe('Corridor Frontend Critical Flows & Specifications', () => {
     await page.goto('/execution');
     await page.getByRole('button', { name: /Submit Order/i }).click();
 
-    // Find and click Cancel button in table
     const cancelBtn = page.locator('table[aria-label="Orders Table"] button', { hasText: 'Cancel' }).first();
     await expect(cancelBtn).toBeVisible();
     await cancelBtn.click();
 
-    // Modal appears and confirmation is clicked
     const confirmBtn = page.locator('.dialog-content button', { hasText: /Cancel Order|Confirm/i }).last();
     await expect(confirmBtn).toBeVisible();
     await confirmBtn.click();
 
-    // Status updates to cancelled
     const orderRow = page.locator('table[aria-label="Orders Table"] tbody tr').first();
     await expect(orderRow).toContainText(/cancelled/i);
   });
@@ -156,19 +165,16 @@ test.describe('Corridor Frontend Critical Flows & Specifications', () => {
   test('Flow 3: Feed Stalled critical banner appears when feed is stalled', async ({ page }) => {
     await page.goto('/book');
 
-    // Toggle Feed Stall simulation button on screen
-    const toggleStallBtn = page.getByRole('button', { name: /Toggle Feed Stall/i });
+    const toggleStallBtn = page.getByRole('button', { name: /Simulate Feed Stall|Toggle Feed Stall/i });
     await expect(toggleStallBtn).toBeVisible();
     await toggleStallBtn.click();
 
-    // Stalled critical banner appears
     const banner = page.locator('[data-testid="feed-stalled-banner"]');
     await expect(banner).toBeVisible();
     await expect(banner).toContainText('FEED STALLED');
   });
 
   test('Flow 4: Execution Halt critical banner appears when engine risk trips', async ({ page }) => {
-    // Override metrics with halted = 1
     await page.route('**/api/corridor/metrics', async (route) => {
       await route.fulfill({
         status: 200,
@@ -184,13 +190,51 @@ test.describe('Corridor Frontend Critical Flows & Specifications', () => {
 
     await page.goto('/execution');
 
-    // Execution halt banner should appear
     const haltBanner = page.locator('[data-testid="execution-halt-banner"]');
     await expect(haltBanner).toBeVisible();
     await expect(haltBanner).toContainText('EXECUTION HALTED');
 
-    // Order submit button should be disabled
     const submitBtn = page.getByRole('button', { name: /Submit Order/i });
     await expect(submitBtn).toBeDisabled();
+  });
+
+  test('Flow 5 (Bug 1 Regression): When offline, Order Book and Audit Trail show EmptyState without fabricated data', async ({ page }) => {
+    // Override routes with 503 Service Unavailable / Offline
+    await page.route('**/api/corridor/metrics', async (route) => {
+      await route.fulfill({ status: 503, body: 'Service Unavailable' });
+    });
+    await page.route('**/api/corridor/health', async (route) => {
+      await route.fulfill({ status: 503, body: 'Service Unavailable' });
+    });
+    await page.route('**/api/corridor/ledger', async (route) => {
+      await route.fulfill({ status: 503, body: JSON.stringify({ error: 'ledger_not_configured' }) });
+    });
+
+    // Check Order Book
+    await page.goto('/book');
+    await expect(page.locator('text=Awaiting Live LOB Depth Stream')).toBeVisible();
+
+    // Check Audit Trail
+    await page.goto('/audit');
+    await expect(page.locator('text=Awaiting Engine Recovery Ledger Stream')).toBeVisible();
+    await expect(page.locator('text=Awaiting Data')).toBeVisible();
+
+    // Check Pilot Summary
+    await page.goto('/overview');
+    const firstMetric = page.locator('.panel-card span.tabular-nums').first();
+    await expect(firstMetric).toHaveText('—');
+  });
+
+  test('Flow 6 (Part 2): Sandbox / API Console screen loads with dev tools', async ({ page }) => {
+    await page.goto('/sandbox');
+
+    const banner = page.locator('[data-testid="sandbox-banner"]');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('INTERNAL TOOL — NOT PART OF PILOT DEMO FLOW');
+
+    // Check presence of REST panel and metrics button
+    await expect(page.getByRole('button', { name: /Send Request/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Fetch \/metrics/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Connect Stream/i })).toBeVisible();
   });
 });

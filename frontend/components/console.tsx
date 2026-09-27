@@ -18,11 +18,12 @@ import {
   Unplug,
   ChevronRight,
   User,
+  Cpu,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useConsole } from '@/lib/store';
 import { request, integer } from '@/lib/contracts';
-import { useTelemetry } from './telemetry';
+import { useConnectionState } from '@/lib/connection';
 import { ConnectionBadge } from './primitives/ConnectionBadge';
 import { StatusChip } from './primitives/StatusChip';
 import { SandboxWatermark } from './primitives/SandboxWatermark';
@@ -34,6 +35,7 @@ import { TelemetryScreen } from './screens/TelemetryScreen';
 import { SystemHealthScreen } from './screens/SystemHealthScreen';
 import { AuditTrailScreen } from './screens/AuditTrailScreen';
 import { PilotSummaryScreen } from './screens/PilotSummaryScreen';
+import { SandboxScreen } from './screens/SandboxScreen';
 
 const screens = [
   { id: 'book', label: 'Order Book', icon: Layers, desc: 'Real-time LOB depth and spread ladder.' },
@@ -42,6 +44,7 @@ const screens = [
   { id: 'operations', label: 'System Health', icon: ShieldCheck, desc: 'Operational state, arena memory, and circuit breaker.' },
   { id: 'audit', label: 'Audit Trail', icon: BookOpen, desc: 'Read-only recovery ledger and checksum integrity.' },
   { id: 'overview', label: 'Pilot Summary', icon: Gauge, desc: 'Institutional maturity disclosure and verified metrics.' },
+  { id: 'sandbox', label: 'Sandbox / API Console', icon: Terminal, desc: 'Raw REST requests, Prometheus dumps, and WebSocket inspector.' },
 ];
 
 export function ConsoleApp({ screen }: { screen: string }) {
@@ -67,7 +70,9 @@ function Workspace({ screen }: { screen: string }) {
   const { palette, setPalette, setOrderId } = useConsole();
   const [search, setSearch] = useState('');
 
-  const { query, health, healthFresh, history, fresh, metrics, age } = useTelemetry();
+  // Single source of truth for connection state across all screens
+  const connection = useConnectionState();
+
   const config = useQuery({
     queryKey: ['config'],
     queryFn: async () => JSON.parse(await request('config')) as { orders: boolean; metrics: boolean; ledger: boolean },
@@ -81,7 +86,6 @@ function Workspace({ screen }: { screen: string }) {
   if (screen === 'audit-trail') currentScreenId = 'audit';
 
   const activeScreen = screens.find((s) => s.id === currentScreenId) || screens[0];
-  const halted = metrics.luv_execution_halted === 1;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -100,9 +104,19 @@ function Workspace({ screen }: { screen: string }) {
     router.push('/' + id);
   };
 
+  // BUG 5 FIX: Dynamic, page-aware top-right telemetry scrape note
+  let scrapeStatusNote = 'NO TELEMETRY SCRAPE YET';
+  if (currentScreenId === 'sandbox') {
+    scrapeStatusNote = 'DIRECT API PROBE MODE';
+  } else if (!connection.isOnline) {
+    scrapeStatusNote = 'ENGINE OFFLINE · NO ACTIVE SCRAPE';
+  } else if (connection.age !== null) {
+    scrapeStatusNote = `LAST SCRAPE: ${connection.age}s AGO`;
+  }
+
   return (
     <div className="shell-container">
-      {/* LEFT NAVIGATION (Section 5 Architecture) */}
+      {/* LEFT NAVIGATION (Section 5 Architecture + Part 2 Sandbox nav) */}
       <aside className="sidebar-nav">
         <Link href="/overview" className="h-[72px] flex items-center gap-3 px-5 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
           <div className="w-8 h-8 rounded bg-[var(--accent)] flex items-center justify-center font-mono font-bold text-white text-sm shadow-md">
@@ -157,7 +171,7 @@ function Workspace({ screen }: { screen: string }) {
 
           <div className="flex items-center justify-between text-[10px] font-mono text-[var(--text-secondary)]">
             <span>FORT ENGINE · C++20</span>
-            <StatusChip status="live" label="PARKED" />
+            <StatusChip status={connection.isOnline ? 'live' : 'offline'} label={connection.isOnline ? 'PARKED' : 'OFFLINE'} />
           </div>
         </div>
       </aside>
@@ -173,12 +187,12 @@ function Workspace({ screen }: { screen: string }) {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Global Connection Badge */}
+            {/* Global Connection Badge derived from unified connection store */}
             <ConnectionBadge
-              wsConnected={true}
-              healthOk={healthFresh}
-              feedFresh={!halted}
-              ageSeconds={age}
+              wsConnected={connection.wsConnected}
+              healthOk={connection.healthOk}
+              feedFresh={connection.feedFresh}
+              ageSeconds={connection.age}
             />
 
             {/* Environment Badge */}
@@ -189,7 +203,7 @@ function Workspace({ screen }: { screen: string }) {
               SIMULATION (RESEARCH)
             </span>
 
-            {/* Account / Session Control (Stubbed Cleanly per Section 5) */}
+            {/* Account / Session Control */}
             <div className="flex items-center gap-2 border-l border-[var(--border-subtle)] pl-4 text-xs font-mono text-[var(--text-secondary)]">
               <div className="w-6 h-6 rounded-full bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] flex items-center justify-center">
                 <User className="w-3.5 h-3.5 text-[var(--accent)]" />
@@ -220,7 +234,7 @@ function Workspace({ screen }: { screen: string }) {
 
             <div className="text-right">
               <span className="text-[10px] font-mono text-[var(--text-secondary)] block">
-                {age === null ? 'NO TELEMETRY SCRAPE YET' : `LAST SCRAPE: ${age}s AGO`}
+                {scrapeStatusNote}
               </span>
               <span className="text-[10px] text-[var(--text-secondary)] font-mono">
                 Port 9090 (/metrics) · Port 8080 (/api/v1)
@@ -231,36 +245,40 @@ function Workspace({ screen }: { screen: string }) {
           {/* Render Active Screen */}
           {currentScreenId === 'book' && (
             <OrderBookScreen
-              feedFresh={!halted}
-              wsConnected={true}
-              healthOk={healthFresh}
-              tickRate={metrics.luv_execution_tick_rate_hz || 0}
+              feedFresh={connection.feedFresh}
+              wsConnected={connection.wsConnected}
+              healthOk={connection.healthOk}
+              isOnline={connection.isOnline}
+              tickRate={connection.tickRate}
+              lastTickTime={connection.lastTickTime}
             />
           )}
 
           {currentScreenId === 'execution' && (
             <ExecutionScreen
-              enabled={!config.isError}
-              halted={halted}
+              enabled={!config.isError && connection.healthOk}
+              halted={connection.halted}
             />
           )}
 
           {currentScreenId === 'telemetry' && (
             <TelemetryScreen
-              metrics={metrics}
-              history={history}
-              fresh={fresh}
-              age={age}
+              metrics={connection.metrics}
+              history={connection.history}
+              fresh={connection.isOnline}
+              age={connection.age}
             />
           )}
 
           {currentScreenId === 'operations' && (
             <SystemHealthScreen
-              healthOk={healthFresh}
-              wsConnected={true}
-              feedFresh={!halted}
-              halted={halted}
-              metrics={metrics}
+              healthOk={connection.healthOk}
+              wsConnected={connection.wsConnected}
+              feedFresh={connection.feedFresh}
+              feedState={connection.feedState}
+              isOnline={connection.isOnline}
+              halted={connection.halted}
+              metrics={connection.metrics}
             />
           )}
 
@@ -270,10 +288,14 @@ function Workspace({ screen }: { screen: string }) {
 
           {currentScreenId === 'overview' && (
             <PilotSummaryScreen
-              metrics={metrics}
-              fresh={fresh}
-              healthOk={healthFresh}
+              metrics={connection.metrics}
+              fresh={connection.isOnline}
+              healthOk={connection.healthOk}
             />
+          )}
+
+          {currentScreenId === 'sandbox' && (
+            <SandboxScreen config={config.data} />
           )}
         </main>
       </div>

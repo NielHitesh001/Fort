@@ -12,6 +12,8 @@ const validRoutes = [
   'system-health',
   'audit',
   'audit-trail',
+  'sandbox',
+  'api-console',
 ];
 
 export default async function Page({

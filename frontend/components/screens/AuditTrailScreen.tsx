@@ -11,12 +11,14 @@ import {
   FileLock2,
   AlertTriangle,
   Lock,
+  Database,
 } from 'lucide-react';
 import { StatusChip } from '@/components/primitives/StatusChip';
 import { NumericValue } from '@/components/primitives/NumericValue';
 import { EmptyState } from '@/components/primitives/EmptyState';
 import { Button } from '@/components/ui/button';
 import { request, fixed, exportToCSV } from '@/lib/contracts';
+import { useConnectionState } from '@/lib/connection';
 
 type LedgerRecord = {
   sequence: string;
@@ -40,6 +42,8 @@ export function AuditTrailScreen() {
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
+  const { isOnline } = useConnectionState();
+
   const query = useQuery({
     queryKey: ['ledger'],
     queryFn: async () => {
@@ -50,15 +54,11 @@ export function AuditTrailScreen() {
     refetchOnWindowFocus: false,
   });
 
-  const allRows: LedgerRecord[] = query.data?.rows || [
-    // Built-in verified research replay sequence from test_audit_integrity.cpp
-    { sequence: '0', type: 'kAdd', order_id: '1001', quantity: '100', price: '1502500', side: 0, timestamp_ns: '1726000000000001000' },
-    { sequence: '1', type: 'kAck', order_id: '1001', quantity: '100', price: '1502500', side: 0, timestamp_ns: '1726000000000002500' },
-    { sequence: '2', type: 'kFill', order_id: '1001', quantity: '100', price: '1502500', side: 0, timestamp_ns: '1726000000000005000' },
-    { sequence: '3', type: 'kAdd', order_id: '1002', quantity: '250', price: '1502800', side: 1, timestamp_ns: '1726000000000010000' },
-    { sequence: '4', type: 'kCancel', order_id: '1002', quantity: '250', price: '1502800', side: 1, timestamp_ns: '1726000000000015000' },
-    { sequence: '5', type: 'kAdd', order_id: '1003', quantity: '500', price: '1502200', side: 0, timestamp_ns: '1726000000000020000' },
-  ];
+  // BUG 1 & PART 3 ITEM 4 FIX:
+  // Strictly use backend ledger rows from query. No fabricated fallback fixtures.
+  const allRows: LedgerRecord[] = !query.isError && query.data?.rows ? query.data.rows : [];
+  const hasRealData = !query.isError && !!query.data?.rows;
+  const isValidated = !query.isError && query.data?.validation === 'valid';
 
   const filteredRows = allRows.filter((r) => {
     const matchesOrder = !filterOrderId || r.order_id.includes(filterOrderId);
@@ -70,6 +70,7 @@ export function AuditTrailScreen() {
   const totalPages = Math.ceil(filteredRows.length / pageSize) || 1;
 
   function handleExportCSV() {
+    if (!filteredRows.length) return;
     const headers = ['Sequence', 'Event Type', 'Order ID', 'Side', 'Quantity', 'Price (Fixed)', 'Timestamp (ns)'];
     const data = filteredRows.map((r) => [
       r.sequence,
@@ -92,7 +93,7 @@ export function AuditTrailScreen() {
             Ledger Records Logged
           </span>
           <div className="text-2xl font-mono font-bold text-[var(--text-primary)] my-1">
-            <NumericValue value={query.data?.total || allRows.length} unit="events" />
+            <NumericValue value={hasRealData ? query.data?.total : undefined} unit="events" />
           </div>
           <span className="text-[10px] text-[var(--text-secondary)] block">
             DurableAuditLog / RecoveryLedger
@@ -103,12 +104,21 @@ export function AuditTrailScreen() {
           <span className="text-[10px] font-mono text-[var(--text-secondary)] uppercase block">
             Hash Integrity Verification
           </span>
-          <div className="text-2xl font-mono font-bold text-[var(--status-ok)] my-1 flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[var(--status-ok)]" />
-            <span>SHA-256 Chained</span>
+          <div className="text-2xl font-mono font-bold my-1 flex items-center gap-2">
+            {isValidated ? (
+              <>
+                <ShieldCheck className="w-5 h-5 text-[var(--status-ok)]" />
+                <span className="text-[var(--status-ok)]">SHA-256 Verified</span>
+              </>
+            ) : (
+              <>
+                <FileLock2 className="w-5 h-5 text-[var(--text-secondary)]" />
+                <span className="text-[var(--text-secondary)]">Awaiting Data</span>
+              </>
+            )}
           </div>
           <span className="text-[10px] text-[var(--text-secondary)] block">
-            Sequence checksums verified
+            {isValidated ? 'Sequence checksums verified' : 'No verified ledger stream active'}
           </span>
         </div>
 
@@ -146,6 +156,7 @@ export function AuditTrailScreen() {
                   setFilterOrderId(e.target.value);
                   setPage(0);
                 }}
+                disabled={!hasRealData}
               />
             </div>
 
@@ -157,6 +168,7 @@ export function AuditTrailScreen() {
                 setFilterEventType(e.target.value);
                 setPage(0);
               }}
+              disabled={!hasRealData}
             >
               <option value="ALL">All Events</option>
               <option value="kAdd">kAdd</option>
@@ -171,106 +183,120 @@ export function AuditTrailScreen() {
               variant="outline"
               className="h-8 text-xs gap-1.5"
               onClick={handleExportCSV}
+              disabled={!filteredRows.length}
             >
               <Download className="w-3.5 h-3.5" /> Export CSV
             </Button>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="dense-table" aria-label="Audit Records Table">
-            <thead>
-              <tr>
-                <th>Seq #</th>
-                <th>Event Type</th>
-                <th>Order ID</th>
-                <th>Side</th>
-                <th className="text-right">Quantity</th>
-                <th className="text-right">Price</th>
-                <th className="text-right font-mono">Timestamp (ns Monotonic)</th>
-                <th>Integrity Proof</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedRows.length > 0 ? (
-                paginatedRows.map((row) => (
-                  <tr key={row.sequence} className="hover:bg-[var(--bg-surface-2)]">
-                    <td className="font-mono text-xs text-[var(--text-secondary)]">
-                      #{row.sequence}
-                    </td>
-                    <td>
-                      <StatusChip status="live" label={row.type} />
-                    </td>
-                    <td className="font-mono text-xs font-semibold text-[var(--accent)]">
-                      #{row.order_id}
-                    </td>
-                    <td>
-                      <span
-                        className={`font-mono text-[11px] font-bold uppercase ${
-                          row.side === 0 ? 'text-[var(--status-ok)]' : 'text-[var(--status-critical)]'
-                        }`}
-                      >
-                        {row.side === 0 ? 'BUY' : 'SELL'}
-                      </span>
-                    </td>
-                    <td className="text-right font-mono font-medium">
-                      {Number(row.quantity).toLocaleString()}
-                    </td>
-                    <td className="text-right font-mono">
-                      {fixed(row.price)}
-                    </td>
-                    <td className="text-right font-mono text-[11px] text-[var(--text-secondary)]">
-                      {row.timestamp_ns}
-                    </td>
-                    <td>
-                      <span className="font-mono text-[10px] text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                        SHA-256 Valid
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={8}>
-                    <EmptyState
-                      title="No Matching Audit Records"
-                      description="No records match the current filter criteria."
-                      icon={FileLock2}
-                    />
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination Controls */}
-        <div className="p-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)] font-mono">
-          <span>
-            Showing {filteredRows.length ? page * pageSize + 1 : 0}–
-            {Math.min((page + 1) * pageSize, filteredRows.length)} of {filteredRows.length} records
-          </span>
-          <div className="flex gap-1.5">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              disabled={page === 0}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              disabled={(page + 1) * pageSize >= filteredRows.length}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
+        {!hasRealData ? (
+          <div className="p-6">
+            <EmptyState
+              title="Awaiting Engine Recovery Ledger Stream"
+              description="Durable audit records are read from the C++20 RecoveryLedger binary file via /api/corridor/ledger. When the engine ledger is offline or unconfigured, unverified mock records are not displayed."
+              backendSource="luv_recovery.hpp · RecoveryLedger / DurableAuditLog (SHA-256 Chained)"
+              icon={FileLock2}
+            />
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="dense-table" aria-label="Audit Records Table">
+                <thead>
+                  <tr>
+                    <th>Seq #</th>
+                    <th>Event Type</th>
+                    <th>Order ID</th>
+                    <th>Side</th>
+                    <th className="text-right">Quantity</th>
+                    <th className="text-right">Price</th>
+                    <th className="text-right font-mono">Timestamp (ns Monotonic)</th>
+                    <th>Integrity Proof</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedRows.length > 0 ? (
+                    paginatedRows.map((row) => (
+                      <tr key={row.sequence} className="hover:bg-[var(--bg-surface-2)]">
+                        <td className="font-mono text-xs text-[var(--text-secondary)]">
+                          #{row.sequence}
+                        </td>
+                        <td>
+                          <StatusChip status="live" label={row.type} />
+                        </td>
+                        <td className="font-mono text-xs font-semibold text-[var(--accent)]">
+                          #{row.order_id}
+                        </td>
+                        <td>
+                          <span
+                            className={`font-mono text-[11px] font-bold uppercase ${
+                              row.side === 0 ? 'text-[var(--status-ok)]' : 'text-[var(--status-critical)]'
+                            }`}
+                          >
+                            {row.side === 0 ? 'BUY' : 'SELL'}
+                          </span>
+                        </td>
+                        <td className="text-right font-mono font-medium">
+                          {Number(row.quantity).toLocaleString()}
+                        </td>
+                        <td className="text-right font-mono">
+                          {fixed(row.price)}
+                        </td>
+                        <td className="text-right font-mono text-[11px] text-[var(--text-secondary)]">
+                          {row.timestamp_ns}
+                        </td>
+                        <td>
+                          <span className="font-mono text-[10px] text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                            SHA-256 Valid
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={8}>
+                        <EmptyState
+                          title="No Matching Audit Records"
+                          description="No records match the current filter criteria."
+                          icon={FileLock2}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination Controls */}
+            <div className="p-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)] font-mono">
+              <span>
+                Showing {filteredRows.length ? page * pageSize + 1 : 0}–
+                {Math.min((page + 1) * pageSize, filteredRows.length)} of {filteredRows.length} records
+              </span>
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={(page + 1) * pageSize >= filteredRows.length}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Compliance Scope Boundary Notice (Section 5.5) */}

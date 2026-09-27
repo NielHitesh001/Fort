@@ -15,7 +15,7 @@ export default defineConfig({
   webServer: {
     command: 'NODE_ENV=production node --env-file-if-exists=.env.local server/index.mjs',
     url: 'http://127.0.0.1:3000/overview',
-    reuseExistingServer: false,
+    reuseExistingServer: true,
     timeout: 30000,
   },
   projects: [

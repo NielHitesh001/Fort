@@ -22,20 +22,21 @@ import { SandboxWatermark } from '@/components/primitives/SandboxWatermark';
 import { Button } from '@/components/ui/button';
 
 interface PilotSummaryScreenProps {
-  metrics: Record<string, number>;
-  fresh: boolean;
-  healthOk: boolean;
+  metrics?: Record<string, number>;
+  fresh?: boolean;
+  healthOk?: boolean;
 }
 
 export function PilotSummaryScreen({
-  metrics,
-  fresh,
-  healthOk,
+  metrics = {},
+  fresh = false,
+  healthOk = false,
 }: PilotSummaryScreenProps) {
-  const tickRate = metrics.luv_execution_tick_rate_hz;
-  const fillsTotal = metrics.luv_execution_fills_total;
-  const riskNs = metrics.luv_execution_risk_check_latency_nanoseconds;
-  const activeOrders = metrics.luv_execution_active_orders;
+  // Sourced 1:1 from Telemetry store. Shows placeholder '—' when offline / not fresh.
+  const tickRate = fresh ? metrics.luv_execution_tick_rate_hz : undefined;
+  const fillsTotal = fresh ? metrics.luv_execution_fills_total : undefined;
+  const riskNs = fresh ? metrics.luv_execution_risk_check_latency_nanoseconds : undefined;
+  const activeOrders = fresh ? metrics.luv_execution_active_orders : undefined;
 
   return (
     <div className="space-y-4">

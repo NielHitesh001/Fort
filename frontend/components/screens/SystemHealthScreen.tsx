@@ -14,17 +14,22 @@ import {
   FileCode2,
   CheckCircle2,
   XCircle,
+  Info,
 } from 'lucide-react';
 import { StatusChip } from '@/components/primitives/StatusChip';
 import { NumericValue } from '@/components/primitives/NumericValue';
 import { EmptyState } from '@/components/primitives/EmptyState';
+import { DemoOnlyControl } from '@/components/primitives/DemoOnlyControl';
 import { Button } from '@/components/ui/button';
 import { MemoryPressureTiers, CircuitBreakerStates, CircuitBreakerState } from '@/lib/contracts';
+import { FeedStatus } from '@/lib/connection';
 
 interface SystemHealthScreenProps {
   healthOk?: boolean;
   wsConnected?: boolean;
   feedFresh?: boolean;
+  feedState?: FeedStatus;
+  isOnline?: boolean;
   halted?: boolean;
   metrics?: Record<string, number>;
 }
@@ -33,14 +38,17 @@ export function SystemHealthScreen({
   healthOk = true,
   wsConnected = false,
   feedFresh = true,
+  feedState = 'offline',
+  isOnline = false,
   halted = false,
   metrics = {},
 }: SystemHealthScreenProps) {
   // Arena memory utilization simulation / state
   const [arenaUsagePct, setArenaUsagePct] = useState<number>(34.2);
-  const [circuitBreakerState, setCircuitBreakerState] = useState<CircuitBreakerState>(
-    halted ? 'kOpen' : 'kClosed'
-  );
+  const [simulatedBreakerState, setSimulatedBreakerState] = useState<CircuitBreakerState | null>(null);
+
+  const effectiveBreakerState: CircuitBreakerState =
+    simulatedBreakerState || (halted ? 'kOpen' : 'kClosed');
 
   const activeOrders = metrics.luv_execution_active_orders ?? 0;
   const queueDepth = metrics.luv_telemetry_queue_depth ?? 0;
@@ -56,8 +64,31 @@ export function SystemHealthScreen({
     arenaTier = MemoryPressureTiers.kWarning;
   }
 
+  // BUG 2 FIX: Identify any divergent connection signals and display transparent explanation
+  let divergenceNotice: string | null = null;
+  if (!healthOk && wsConnected) {
+    divergenceNotice =
+      'API health probe (:9090/healthz) is failing while WebSocket transport remains connected — feed data may be stale despite transport link.';
+  } else if (!isOnline && feedState !== 'offline') {
+    divergenceNotice =
+      'Engine telemetry scrape is inactive; feed state is held in offline standby until next valid Prometheus scrape.';
+  } else if (isOnline && halted) {
+    divergenceNotice =
+      'Engine risk controller has engaged execution halt (RiskState.halted); ingress order book entries are blocked.';
+  }
+
   return (
     <div className="space-y-4">
+      {/* BUG 2: Diagnostic Independence / Divergence Banner */}
+      {divergenceNotice && (
+        <div className="p-3 bg-amber-950/40 border border-amber-500/40 rounded flex items-center gap-2.5 text-xs text-amber-300">
+          <Info className="w-4 h-4 text-amber-400 flex-shrink-0" />
+          <span className="font-mono text-[11px] leading-relaxed">
+            <strong>Subsystem Signal Notice:</strong> {divergenceNotice}
+          </span>
+        </div>
+      )}
+
       {/* STATUS GRID OF INDEPENDENT INDICATORS (Section 5.4) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {/* 1. API Health */}
@@ -83,7 +114,7 @@ export function SystemHealthScreen({
           </span>
           <div className="mt-2">
             <StatusChip
-              status={wsConnected ? 'connected' : 'reconnecting'}
+              status={wsConnected ? 'connected' : 'neutral'}
               label={wsConnected ? 'Connected' : 'Disconnected'}
             />
           </div>
@@ -99,8 +130,22 @@ export function SystemHealthScreen({
           </span>
           <div className="mt-2">
             <StatusChip
-              status={feedFresh ? 'connected' : 'stalled'}
-              label={feedFresh ? 'Ingesting' : 'Stalled (>100ms)'}
+              status={
+                feedState === 'ingesting'
+                  ? 'connected'
+                  : feedState === 'idle'
+                  ? 'neutral'
+                  : 'stalled'
+              }
+              label={
+                feedState === 'ingesting'
+                  ? 'Ingesting'
+                  : feedState === 'idle'
+                  ? 'Idle (0 tick/s)'
+                  : feedState === 'stalled'
+                  ? 'Stalled (>100ms)'
+                  : 'Offline'
+              }
             />
           </div>
           <span className="text-[9px] font-mono text-[var(--text-secondary)] block mt-1.5">
@@ -131,8 +176,14 @@ export function SystemHealthScreen({
           </span>
           <div className="mt-2">
             <StatusChip
-              status={circuitBreakerState === 'kClosed' ? 'live' : circuitBreakerState === 'kHalfOpen' ? 'warn' : 'critical'}
-              label={circuitBreakerState}
+              status={
+                effectiveBreakerState === 'kClosed'
+                  ? 'live'
+                  : effectiveBreakerState === 'kHalfOpen'
+                  ? 'warn'
+                  : 'critical'
+              }
+              label={effectiveBreakerState}
             />
           </div>
           <span className="text-[9px] font-mono text-[var(--text-secondary)] block mt-1.5">
@@ -236,7 +287,7 @@ export function SystemHealthScreen({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div
               className={`p-3 rounded border font-mono ${
-                circuitBreakerState === 'kClosed'
+                effectiveBreakerState === 'kClosed'
                   ? 'border-[var(--status-ok)] bg-[var(--status-ok)]/10 text-[var(--status-ok)]'
                   : 'border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] opacity-60'
               }`}
@@ -252,7 +303,7 @@ export function SystemHealthScreen({
 
             <div
               className={`p-3 rounded border font-mono ${
-                circuitBreakerState === 'kHalfOpen'
+                effectiveBreakerState === 'kHalfOpen'
                   ? 'border-[var(--status-warn)] bg-[var(--status-warn)]/10 text-[var(--status-warn)]'
                   : 'border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] opacity-60'
               }`}
@@ -268,7 +319,7 @@ export function SystemHealthScreen({
 
             <div
               className={`p-3 rounded border font-mono ${
-                circuitBreakerState === 'kOpen'
+                effectiveBreakerState === 'kOpen'
                   ? 'border-[var(--status-critical)] bg-[var(--status-critical)]/10 text-[var(--status-critical)]'
                   : 'border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] opacity-60'
               }`}
@@ -283,23 +334,27 @@ export function SystemHealthScreen({
             </div>
           </div>
 
-          <div className="p-3 bg-[var(--bg-surface-2)] rounded border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)] flex items-center justify-between flex-wrap gap-2">
-            <span>
-              Manual Trip Endpoint: <code className="font-mono text-[var(--text-primary)]">Read-Only</code> (No public trip route exposed by local HTTP server)
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-[11px] h-7"
+          {/* BUG 4 FIX: DemoOnlyControl explicitly labeling UI toggle */}
+          <div className="p-3 bg-[var(--bg-surface-2)] rounded border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)] flex items-center justify-between flex-wrap gap-3">
+            <div className="space-y-0.5">
+              <span className="block">
+                Manual Trip Endpoint: <code className="font-mono text-[var(--text-primary)]">Read-Only</code> (No public trip route exposed by local HTTP server)
+              </span>
+              <span className="text-[10px] text-[var(--text-secondary)]">
+                Engine breaker state transitions are autonomously driven by consecutive risk rejections in C++20 hot path.
+              </span>
+            </div>
+            <div>
+              <DemoOnlyControl
+                label={effectiveBreakerState === 'kClosed' ? 'Simulate Trip (kOpen)' : 'Reset Breaker (kClosed)'}
                 onClick={() =>
-                  setCircuitBreakerState(
-                    circuitBreakerState === 'kClosed' ? 'kOpen' : 'kClosed'
+                  setSimulatedBreakerState(
+                    effectiveBreakerState === 'kClosed' ? 'kOpen' : 'kClosed'
                   )
                 }
-              >
-                Simulate Breaker State Toggle
-              </Button>
+                active={effectiveBreakerState === 'kOpen'}
+                description="Simulates circuit breaker trip/reset in UI view only"
+              />
             </div>
           </div>
         </div>
